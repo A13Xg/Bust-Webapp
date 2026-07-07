@@ -26,6 +26,8 @@
     "ws": "latest"
   },
   "devDependencies": {
+    "@emnapi/core": "^1.11.2",
+    "@emnapi/runtime": "^1.11.2",
     "@vitejs/plugin-react": "^6.0.3",
     "concurrently": "latest",
     "jsdom": "latest",
