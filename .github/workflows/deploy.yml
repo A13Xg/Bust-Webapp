@@ -16,24 +16,50 @@ concurrency:
 
 jobs:
   build-deploy:
+    name: Build, test, and deploy Pages
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: bust
+          POSTGRES_PASSWORD: bust
+          POSTGRES_DB: bust_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bust -d bust_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://bust:bust@127.0.0.1:5432/bust_test
+      JWT_SECRET: ci-test-secret
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - run: npm test
+      - name: Install dependencies
+        run: npm ci
+      - name: Prepare database schema
+        run: npm run db:migrate
+      - name: Unit tests
+        run: npm test
       - name: Database connection check
+        run: npm run db:check
+      - name: Verify Supabase Pages secrets
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
-        run: node scripts/ci-db-check.mjs
-      - name: Build (static Supabase mode)
+        run: |
+          test -n "$VITE_SUPABASE_URL"
+          test -n "$VITE_SUPABASE_ANON_KEY"
+      - name: Build webpage for GitHub Pages
         env:
           GHPAGES_BASE: /${{ github.event.repository.name }}/
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}

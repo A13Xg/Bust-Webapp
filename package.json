@@ -6,6 +6,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
+    "db:check": "node scripts/ci-db-check.mjs",
     "db:migrate": "node server/migrate.js"
   },
   "dependencies": {
@@ -25,11 +26,11 @@
     "ws": "latest"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.4",
+    "@vitejs/plugin-react": "^6.0.3",
     "concurrently": "latest",
     "jsdom": "latest",
     "vite": "^8.1.3",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.10"
   },
   "name": "bust-webapp",
   "version": "1.0.0",

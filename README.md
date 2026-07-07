@@ -3,8 +3,6 @@
 [![CI](https://github.com/A13Xg/Bust-Webapp/actions/workflows/ci.yml/badge.svg)](https://github.com/A13Xg/Bust-Webapp/actions/workflows/ci.yml)
 [![Deploy to GitHub Pages](https://github.com/A13Xg/Bust-Webapp/actions/workflows/deploy.yml/badge.svg)](https://github.com/A13Xg/Bust-Webapp/actions/workflows/deploy.yml)
 [![Live Site](https://img.shields.io/badge/GitHub_Pages-live-ff5e00?logo=github)](https://a13xg.github.io/Bust-Webapp/)
-[![Tests](https://img.shields.io/badge/tests-vitest-6E9F18?logo=vitest&logoColor=white)](https://github.com/A13Xg/Bust-Webapp/actions/workflows/ci.yml)
-[![Database](https://img.shields.io/badge/database-Supabase-3FCF8E?logo=supabase&logoColor=white)](https://supabase.com)
 
 
 A real-time, mobile-first, satirical pressure-logging web app for a private crew. Press the button, ride the milk explosion, climb the leaderboard, and collect an unreasonable number of badges.
@@ -26,6 +24,10 @@ npm run db:migrate
 npm run dev        # API :8787 + Vite :5173
 ```
 Static / GitHub Pages (no server — Supabase Auth + RLS + Realtime): see `DEPLOY.md`.
+
+## CI / GitHub Pages
+- `CI` installs with `npm ci`, migrates a disposable PostgreSQL service, runs Vitest, verifies the DB connection/schema, and builds the page.
+- `Deploy to GitHub Pages` repeats the same DB-backed checks, requires `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` Actions secrets, then uploads `dist/` to Pages.
 
 Sign-ups require the invite code `Bust4Me`.
 

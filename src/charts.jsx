@@ -111,6 +111,9 @@ export function Gauge({ pct = 0, label = '', size = 120 }) {
 export function ScatterChart({ points = [], height = 240 }) {
   const [tip, setTip] = React.useState(null);
   const w = 600, h = height, padL = 52, padR = 14, padT = 12, padB = 34;
+  if (!points.length) {
+    return <div className="empty-state"><span>No temperature/pressure data yet.</span></div>;
+  }
   const xs = points.map(p => p.x), ys = points.map(p => p.y);
   let x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
   if (x0 === x1) { x0 -= 5; x1 += 5; }
