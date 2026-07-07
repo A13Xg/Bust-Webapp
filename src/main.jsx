@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Bell, ChevronUp, Gauge, LogOut, MapPin, Medal, Repeat2, Sparkles, Thermometer, Trophy, Volume2, VolumeX, X } from 'lucide-react';
 import 'material-symbols/outlined.css';
 import './styles.css';
-import { achievements, computeAchievementUnlocks, deriveAllTimeRecords, derivePersonalStats, deriveStreaks, buildTrend, progressionCatalog, timeBucket, twoHoursRemainingMs, todayKey } from './rules.js';
+import { achievements, capUnlocksPerBust, computeAchievementUnlocks, deriveAllTimeRecords, derivePersonalStats, deriveStreaks, buildTrend, progressionCatalog, timeBucket, twoHoursRemainingMs, todayKey } from './rules.js';
 import { expansionItems } from './expansion.js';
 import { TrendChart, DonutChart, HourHistogram, Sparkline, ScatterChart } from './charts.jsx';
 import { backend } from './backend.js';
@@ -82,6 +82,39 @@ function DeleteAccountModal({onClose,onDeleted}){
     </div>
   </div>, document.body) }
 
+/** Shown immediately after login when location or notifications aren't granted.
+ *  Fires the browser permission prompts on open; SKIP dismisses, OKAY reloads. */
+function PermissionGate(){
+  const [show,setShow]=useState(false);
+  const [notif,setNotif]=useState(typeof Notification!=='undefined'?Notification.permission:'unsupported');
+  const [geo,setGeo]=useState('checking');
+  useEffect(()=>{ let alive=true; (async()=>{
+      let g='prompt';
+      try{ const r=await navigator.permissions.query({name:'geolocation'}); g=r.state; r.onchange=()=>{ if(alive) setGeo(r.state); }; }catch{}
+      if(!alive) return;
+      setGeo(g);
+      const n=typeof Notification!=='undefined'?Notification.permission:'unsupported';
+      if(g!=='granted' || (n!=='granted'&&n!=='unsupported')) setShow(true);
+    })(); return()=>{ alive=false; }; },[]);
+  useEffect(()=>{ if(!show) return; // trigger the real browser prompts as soon as the popup appears
+    if(typeof Notification!=='undefined'&&Notification.permission==='default') Notification.requestPermission().then(setNotif).catch(()=>{});
+    navigator.geolocation?.getCurrentPosition(
+      p=>{ localStorage.setItem('bust_geo',JSON.stringify({lat:p.coords.latitude,long:p.coords.longitude,at:Date.now()})); setGeo('granted'); },
+      ()=>setGeo(g=>g==='granted'?g:'denied'),{timeout:20000});
+  },[show]);
+  if(!show) return null;
+  const lbl=v=>({granted:'ENABLED',denied:'BLOCKED',default:'WAITING…',prompt:'WAITING…',checking:'…',unsupported:'N/A'}[v]||v);
+  return createPortal(<div className="ach-detail-back"><div className="picker-box confirm-box mf-frame">
+    <h2>Enable Permissions</h2>
+    <p className="showcase-hint">BUST stamps each event with your location + weather and pings you when the crew fires. Allow the browser prompts above, then hit OKAY.</p>
+    <div className="perm-status">
+      <span className={geo==='granted'?'ok':''}><MIcon name="location_on"/> LOCATION · {lbl(geo)}</span>
+      <span className={notif==='granted'?'ok':''}><MIcon name="notifications"/> NOTIFICATIONS · {lbl(notif)}</span>
+    </div>
+    {(geo==='denied'||notif==='denied')&&<small className="showcase-hint">Blocked? Click the padlock in the address bar to re-enable, then hit OKAY.</small>}
+    <div className="picker-actions"><button className="mf-button ghost" onClick={()=>setShow(false)}>SKIP</button><button className="mf-button" onClick={()=>location.reload()}>OKAY</button></div>
+  </div></div>,document.body) }
+
 function Login({ onAuthed }) {
   const [mode, setMode] = useState('login'); const [form,setForm]=useState({username:'',password:'',inviteCode:''}); const [error,setError]=useState(''); const [busy,setBusy]=useState(false);
   async function submit(e){ e.preventDefault(); setBusy(true); setError(''); try { const user = await backend[mode](form); onAuthed(user); } catch(err){ setError(err.message); } finally{ setBusy(false); }}
@@ -97,16 +130,16 @@ function Dashboard({user,setUser}){ const [busts,setBusts]=useState([]),[users,s
   useEffect(()=>{ refresh().catch(console.error); const unsub=backend.subscribe({
       onBust: bust=>{ setBusts(prev=>[bust,...prev.filter(b=>b.id!==bust.id)]); setUsers(prev=>prev.map(u=>u.id===bust.user_id?{...u,last_bust_timestamp:bust.timestamp}:u)); if(bust.user_id!==user.id){ setUnread(n=>n+1); setToasts(t=>[{id:crypto.randomUUID(),bust},...t]); if(Notification?.permission==='granted') new Notification(`${bust.username} logged a BUST`, { body: bust.note || 'Pressure event received.' }); } },
       onProfile: p=>{ setUsers(prev=>prev.map(u=>u.id===p.id?{...u,...p}:u)); }
-    }); if(Notification?.permission==='default') Notification.requestPermission().catch(()=>{}); return unsub; },[]);
+    }); return unsub; },[]);
   useEffect(()=>{ if(locked&&!muted){ const h=sfx.play('drip',{loop:true,volume:.22}); const t=setTimeout(()=>h.stop(),60000); return()=>{ clearTimeout(t); h.stop(); }; } },[locked,muted]);
   async function collectContext(){ let lat=null,long=null,temp_f=null,pressure=null,city=null; try{ const cached=JSON.parse(localStorage.getItem('bust_geo')||'null'); const pos=cached && Date.now()-cached.at<86400000 ? cached : await new Promise((res,rej)=>navigator.geolocation.getCurrentPosition(p=>res({lat:p.coords.latitude,long:p.coords.longitude,at:Date.now()}),rej,{timeout:6000})); localStorage.setItem('bust_geo',JSON.stringify(pos)); lat=pos.lat; long=pos.long; const w=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${long}&current=temperature_2m,surface_pressure&temperature_unit=fahrenheit`).then(r=>r.json()); temp_f=w.current?.temperature_2m ?? null; pressure=w.current?.surface_pressure ?? null; try{ const g=await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${long}&localityLanguage=en`).then(r=>r.json()); city=g.city||g.locality||g.principalSubdivision||null; }catch{} }catch{} return {lat,long,temp_f,pressure,city}; }
   async function startBust(){ if(locked || phase!=='idle') return; navigator.vibrate?.([35,45,70,65,100]); setPhase('charge'); chargeSfx.current=sfx.play('charge',{loop:true,volume:.75}); setPendingCtx(await collectContext()); setTimeout(()=>{navigator.vibrate?.([180,60,220,80,300]); chargeSfx.current?.stop(); sfx.play('explosion',{volume:.9}); setPhase('explode');},1400); setTimeout(()=>setPhase('note'),5900); }
-  async function commitBust(finalNote){ const noteText=typeof finalNote==='string'?finalNote:note; try{ const bust=await backend.bust({note:noteText,...pendingCtx}); const current=[bust,...bustRef.current]; setBusts(prev=>[bust,...prev.filter(b=>b.id!==bust.id)]); const newOnes=computeAchievementUnlocks(bust.user_id,current,unlocks,{createdAt:user.created_at,userCount:users.length}); if(newOnes.length){ const saved=await backend.saveAchievements(newOnes); setUnlocks(saved); const featured=achievements.find(a=>a.id===newOnes[0]); setBadgeToast(featured); sfx.play('badge',{volume:.85}); setTimeout(()=>setBadgeToast(null),5200); }
+  async function commitBust(finalNote){ const noteText=typeof finalNote==='string'?finalNote:note; try{ const bust=await backend.bust({note:noteText,...pendingCtx}); const current=[bust,...bustRef.current]; setBusts(prev=>[bust,...prev.filter(b=>b.id!==bust.id)]); const newOnes=capUnlocksPerBust(computeAchievementUnlocks(bust.user_id,current,unlocks,{createdAt:user.created_at,userCount:users.length})); if(newOnes.length){ const saved=await backend.saveAchievements(newOnes); setUnlocks(saved); const featured=achievements.find(a=>a.id===newOnes[0]); setBadgeToast(featured); sfx.play('badge',{volume:.85}); setTimeout(()=>setBadgeToast(null),5200); }
       setUser({...user,last_bust_timestamp:bust.timestamp}); setSelected(bust); }catch(e){ alert(e.message); }
     setNote(''); setPendingCtx(null); setPhase('idle'); }
   SHOWCASE_MAP=Object.fromEntries(users.map(u=>[u.id,(u.showcase||'').split(',').filter(Boolean).slice(0,3)]));
   const analytics=useMemo(()=>buildAnalytics(busts,users,user),[busts,users,user]);
-  return <main className={`dash ${locked?'cooldown-mode':''} ${phase==='charge'?'charging':''} ${phase==='explode'?'detonating':''}`}><GridBg/>{locked&&<CooldownGoop/>}<header className="top-bar"><button className="profile-chip" onClick={()=>setOverlay('profile')}><img src={avatar(user.avatar_seed)}/><span>{user.username}</span></button><img className="brand-mark" src={asset('bust-logo.png')} alt="" aria-hidden="true"/><div className="top-actions"><button className="icon-btn" title={muted?'Unmute SFX':'Mute SFX'} onClick={()=>setMuted(sfx.toggleMuted())}>{muted?<VolumeX/>:<Volume2/>}</button><button className="icon-btn" onClick={()=>{setOverlay('alerts');setUnread(0)}}><Bell/>{unread>0&&<b>{unread}</b>}</button><button className="icon-btn trophy-action" onClick={()=>setOverlay('trophy')}><Trophy/><small>{new Set(unlocks.filter(a=>a.user_id===user.id).map(a=>a.achievement_type)).size}</small></button></div></header><section className="button-stage">{locked?<CooldownScene/>:<BustButton phase={phase} onClick={startBust}/>}</section><button className="drawer-handle" onClick={()=>setOverlay('analytics')}><ChevronUp/> ANALYTICS BAY</button><Toasts toasts={toasts} setToasts={setToasts} onOpen={setSelected}/><AnimatePresence>{badgeToast&&<BadgeToast key="badge-toast" badge={badgeToast}/>} {phase==='note'&&<NoteModal key="note-modal" note={note} setNote={setNote} onCommit={commitBust}/>} {overlay&&<Overlay key={`overlay-${overlay}`} title={overlayTitle(overlay)} onClose={()=>setOverlay(null)}>{overlay==='profile'&&<Profile user={user} setUser={setUser} busts={busts} unlocks={unlocks} users={users} onOpen={setSelected}/>} {overlay==='alerts'&&<Alerts busts={busts} onOpen={setSelected}/>} {overlay==='analytics'&&<Analytics data={analytics} busts={busts} onOpen={setSelected}/>} {overlay==='trophy'&&<TrophyCabinet unlocks={unlocks} user={user}/>}</Overlay>} {selected&&<Detail key={`detail-${selected.id}`} bust={selected} all={busts} onClose={()=>setSelected(null)}/>}</AnimatePresence>{phase==='explode'&&<Explosion/>}</main> }
+  return <main className={`dash ${locked?'cooldown-mode':''} ${phase==='charge'?'charging':''} ${phase==='explode'?'detonating':''}`}><GridBg/><PermissionGate/>{locked&&<CooldownGoop/>}<header className="top-bar"><button className="profile-chip" onClick={()=>setOverlay('profile')}><img src={avatar(user.avatar_seed)}/><span>{user.username}</span></button><img className="brand-mark" src={asset('bust-logo.png')} alt="" aria-hidden="true"/><div className="top-actions"><button className="icon-btn" title={muted?'Unmute SFX':'Mute SFX'} onClick={()=>setMuted(sfx.toggleMuted())}>{muted?<VolumeX/>:<Volume2/>}</button><button className="icon-btn" onClick={()=>{setOverlay('alerts');setUnread(0)}}><Bell/>{unread>0&&<b>{unread}</b>}</button><button className="icon-btn trophy-action" onClick={()=>setOverlay('trophy')}><Trophy/><small>{new Set(unlocks.filter(a=>a.user_id===user.id).map(a=>a.achievement_type)).size}</small></button></div></header><section className="button-stage">{locked?<CooldownScene/>:<BustButton phase={phase} onClick={startBust}/>}</section><button className="drawer-handle" onClick={()=>setOverlay('analytics')}><ChevronUp/> ANALYTICS BAY</button><Toasts toasts={toasts} setToasts={setToasts} onOpen={setSelected}/><AnimatePresence>{badgeToast&&<BadgeToast key="badge-toast" badge={badgeToast}/>} {phase==='note'&&<NoteModal key="note-modal" note={note} setNote={setNote} onCommit={commitBust}/>} {overlay&&<Overlay key={`overlay-${overlay}`} title={overlayTitle(overlay)} onClose={()=>setOverlay(null)}>{overlay==='profile'&&<Profile user={user} setUser={setUser} busts={busts} unlocks={unlocks} users={users} onOpen={setSelected}/>} {overlay==='alerts'&&<Alerts busts={busts} onOpen={setSelected}/>} {overlay==='analytics'&&<Analytics data={analytics} busts={busts} onOpen={setSelected}/>} {overlay==='trophy'&&<TrophyCabinet unlocks={unlocks} user={user}/>}</Overlay>} {selected&&<Detail key={`detail-${selected.id}`} bust={selected} all={busts} onClose={()=>setSelected(null)}/>}</AnimatePresence>{phase==='explode'&&<Explosion/>}</main> }
 function GridBg(){ return <div className="grid-bg"/> }
 function BustButton({phase,onClick}){ return <motion.button className="bust-button" disabled={phase!=='idle'} onClick={onClick} animate={phase==='charge'?{scale:[1,1.07,.96,1.09,1],rotate:[0,-3,3,-5,5,0]}:{}} transition={{duration:.18,repeat:phase==='charge'?Infinity:0}}><span>{phase==='charge'?'Edging…':'BUST'}</span><em>{phase==='idle'?'PRESSURE RELEASE CONTROL':'CHAMBER CRITICAL'}</em>{phase==='charge'&&<><i/><i/><i/><i/></>}</motion.button> }
 function Explosion(){ const drops=Array.from({length:110}); const ropes=Array.from({length:18}); const shards=Array.from({length:30}); return <div className="explosion"><div className="blast-flash"/>{ropes.map((_,i)=><b className="goop-rope" key={`r${i}`} style={{'--l':`${Math.random()*100}%`,'--w':`${22+Math.random()*80}px`,'--h':`${38+Math.random()*70}vh`,'--d':`${Math.random()*.55}s`}}/>)}{drops.map((_,i)=><span className="milk-drop" key={`d${i}`} style={{'--x':`${Math.random()*150-75}vw`,'--y':`${Math.random()*120-60}vh`,'--s':`${7+Math.random()*28}px`,'--d':`${Math.random()*1.1}s`}}/>)}{shards.map((_,i)=><i className="button-shard" key={`s${i}`} style={{'--x':`${Math.random()*120-60}vw`,'--y':`${Math.random()*100-50}vh`,'--r':`${Math.random()*900-450}deg`,'--d':`${Math.random()*.6}s`}}/>)}<div className="milk-sheet"/><div className="screen-splatter"/></div> }

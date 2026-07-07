@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { achievements, progressionCatalog, timeBucket, twoHoursRemainingMs, computeAchievementUnlocks, computeProgressionUnlocks, deriveProgressionSummary, deriveAllTimeRecords, deriveStreaks, levelForXp, derivePersonalStats, buildTrend } from './rules.js';
+import { achievements, capUnlocksPerBust, progressionCatalog, timeBucket, twoHoursRemainingMs, computeAchievementUnlocks, computeProgressionUnlocks, deriveProgressionSummary, deriveAllTimeRecords, deriveStreaks, levelForXp, derivePersonalStats, buildTrend } from './rules.js';
 
 describe('BUST rules', () => {
   it('labels time-of-day buckets', () => {
@@ -163,5 +163,22 @@ describe('BUST rules', () => {
     ];
     const ids = computeAchievementUnlocks('u1', busts, [], { userCount: 3 });
     expect(ids).toEqual(expect.arrayContaining(['first_responder', 'synchronized_swimmers']));
+  });
+
+  it('caps unlocks to one achievement and one badge per bust, keeping the highest XP', () => {
+    // first bust with rich conditions qualifies for many at once
+    const bust = { id: 'b1', user_id: 'u1', timestamp: new Date(2026, 0, 1, 6).toISOString(), temp_f: 91, pressure: 1025, note: 'a very detailed field report from the bay', lat: 1, long: 2 };
+    const raw = computeAchievementUnlocks('u1', [bust], []);
+    expect(raw.length).toBeGreaterThan(2);
+    const capped = capUnlocksPerBust(raw);
+    expect(capped.length).toBeLessThanOrEqual(2);
+    const kinds = capped.map(id => achievements.find(a => a.id === id).kind);
+    expect(kinds.filter(k => k === 'achievement').length).toBeLessThanOrEqual(1);
+    expect(kinds.filter(k => k !== 'achievement').length).toBeLessThanOrEqual(1);
+    // highest-XP achievement among qualifiers wins
+    const achIds = raw.filter(id => achievements.find(a => a.id === id)?.kind === 'achievement');
+    const top = achIds.sort((a, b) => (achievements.find(x => x.id === b).points) - (achievements.find(x => x.id === a).points))[0];
+    expect(capped).toContain(top);
+    expect(capUnlocksPerBust([])).toEqual([]);
   });
 });

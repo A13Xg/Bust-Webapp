@@ -263,3 +263,9 @@ header.top-bar{top:0;left:0;right:0;padding:10px clamp(12px,3vw,26px) 10px;paddi
 
 /* if the bundled icon font ever fails, keep icons hidden instead of showing ligature codes */
 .msym-failed .msym{opacity:0!important}
+
+/* login-time permission gate */
+.perm-status{display:grid;gap:10px;justify-items:center;margin:4px 0}
+.perm-status span{display:inline-flex;align-items:center;gap:8px;font:900 12px Tahoma,sans-serif;letter-spacing:1.5px;color:var(--muted)}
+.perm-status span.ok{color:#57cc99}
+.perm-status .msym{font-size:19px}

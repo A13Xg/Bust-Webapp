@@ -161,6 +161,17 @@ export function computeAchievementUnlocks(userId, busts, existing = [], opts = {
   return [...legacy, ...computeProgressionUnlocks(userId, busts, existing), ...computeExpansionUnlocks(userId, busts, existing, opts)].filter((id, index, all) => all.indexOf(id) === index);
 }
 
+/**
+ * Per-bust unlock cap: at most ONE achievement and ONE badge/trophy per bust.
+ * When several qualify, the highest-XP item of each kind wins; the rest are
+ * dropped for now — threshold-based conditions simply re-qualify on a later bust.
+ */
+export function capUnlocksPerBust(ids = []) {
+  const items = ids.map(id => achievements.find(a => a.id === id)).filter(Boolean);
+  const best = kinds => items.filter(i => kinds.includes(i.kind)).sort((a, b) => b.points - a.points)[0]?.id;
+  return [best(['achievement']), best(['badge', 'trophy'])].filter(Boolean);
+}
+
 export function deriveProgressionSummary(userId, existing = []) {
   const unlockedIds = alreadyUnlocked(existing, userId);
   const tracks = progressionCatalog.map(track => {
