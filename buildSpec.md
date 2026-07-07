@@ -94,5 +94,3 @@ The Analytics drawer (pulled from the bottom) contains massive amounts of compar
     *   `Achievements`: ID, UserID, AchievementType, UnlockedAt.
 *   **Animation Libraries:** Utilize robust physics-based animation libraries (e.g., Framer Motion, GSAP, or Three.js/React Three Fiber for the 3D isometric cooldown scene) to handle the complex timing and particle effects.
 
-Supabase ConnectionString:
-postgresql://postgres:KRn%23E%24%40z%25%263!2NJ@db.hshcpohxpfzpbvepuapt.supabase.co:5432/postgres

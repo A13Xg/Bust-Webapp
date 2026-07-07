@@ -1,3 +1,5 @@
+import { expansionItems, computeExpansionUnlocks } from './expansion.js';
+
 export const COOLDOWN_MS = 2 * 60 * 60 * 1000;
 
 const legacyAchievements = [
@@ -71,7 +73,7 @@ export const progressionCatalog = [
   ]}
 ];
 
-export const achievements = [...legacyAchievements, ...progressionCatalog.flatMap(track => track.stages)];
+export const achievements = [...legacyAchievements, ...progressionCatalog.flatMap(track => track.stages), ...expansionItems];
 
 export function todayKey(input = new Date()) {
   const d = input instanceof Date ? input : new Date(input);
@@ -135,7 +137,7 @@ export function computeProgressionUnlocks(userId, busts, existing = []) {
   });
 }
 
-export function computeAchievementUnlocks(userId, busts, existing = []) {
+export function computeAchievementUnlocks(userId, busts, existing = [], opts = {}) {
   const own = busts.filter(b => b.user_id === userId).sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
   const latest = own[own.length - 1];
   if (!latest) return [];
@@ -156,7 +158,7 @@ export function computeAchievementUnlocks(userId, busts, existing = []) {
     add('week_warrior', own.filter(b => new Date(b.timestamp).getTime() >= weekAgo).length >= 5),
     add('cartographer', latest.lat != null && latest.long != null)
   ].filter(Boolean);
-  return [...legacy, ...computeProgressionUnlocks(userId, busts, existing)].filter((id, index, all) => all.indexOf(id) === index);
+  return [...legacy, ...computeProgressionUnlocks(userId, busts, existing), ...computeExpansionUnlocks(userId, busts, existing, opts)].filter((id, index, all) => all.indexOf(id) === index);
 }
 
 export function deriveProgressionSummary(userId, existing = []) {
@@ -170,6 +172,87 @@ export function deriveProgressionSummary(userId, existing = []) {
   const totalUnlocked = tracks.reduce((sum, track) => sum + track.unlocked, 0);
   const totalItems = progressionCatalog.reduce((sum, track) => sum + track.stages.length, 0);
   return { totalUnlocked, totalItems, totalPoints: tracks.reduce((sum, track) => sum + track.points, 0), tracks };
+}
+
+// ---------- Level / XP system ----------
+export const levelTitles = [
+  { at: 0, title: 'Dripling' },
+  { at: 60, title: 'Puddle Scout' },
+  { at: 150, title: 'Pressure Adept' },
+  { at: 300, title: 'Splash Sergeant' },
+  { at: 520, title: 'Cream Colonel' },
+  { at: 820, title: 'Torrent Tactician' },
+  { at: 1200, title: 'Geyser General' },
+  { at: 1700, title: 'Monsoon Marshal' },
+  { at: 2400, title: 'Tsunami Emperor' },
+  { at: 3300, title: 'The White Whale' }
+];
+
+export function levelForXp(points = 0) {
+  let index = 0;
+  for (let i = 0; i < levelTitles.length; i++) if (points >= levelTitles[i].at) index = i;
+  const current = levelTitles[index];
+  const next = levelTitles[index + 1] || null;
+  const span = next ? next.at - current.at : 1;
+  const pct = next ? Math.min(100, Math.round((points - current.at) / span * 100)) : 100;
+  return { level: index + 1, title: current.title, points, nextAt: next?.at ?? null, nextTitle: next?.title ?? null, pct };
+}
+
+// ---------- Streaks ----------
+export function deriveStreaks(bustList = []) {
+  const days = [...new Set(bustList.map(b => todayKey(b.timestamp)))];
+  if (!days.length) return { current: 0, longest: 0 };
+  const stamps = days.map(k => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d).getTime(); }).sort((a, b) => a - b);
+  const DAY = 24 * 60 * 60 * 1000;
+  let longest = 1, run = 1;
+  for (let i = 1; i < stamps.length; i++) { run = stamps[i] - stamps[i - 1] === DAY ? run + 1 : 1; longest = Math.max(longest, run); }
+  const last = stamps[stamps.length - 1];
+  const todayStamp = (() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime(); })();
+  let current = 0;
+  if (last === todayStamp || last === todayStamp - DAY) {
+    current = 1;
+    for (let i = stamps.length - 1; i > 0; i--) { if (stamps[i] - stamps[i - 1] === DAY) current++; else break; }
+  }
+  return { current, longest };
+}
+
+// ---------- Trend series ----------
+export function buildTrend(busts = [], days = 30, now = new Date()) {
+  return Array.from({ length: days }).map((_, i) => {
+    const d = new Date(now); d.setDate(d.getDate() - (days - 1 - i));
+    const key = d.toDateString();
+    return { label: d.toLocaleDateString([], { month: 'numeric', day: 'numeric' }), count: busts.filter(b => new Date(b.timestamp).toDateString() === key).length };
+  });
+}
+
+// ---------- Personal profile stats ----------
+export function derivePersonalStats(userId, busts = [], unlocks = []) {
+  const own = busts.filter(b => b.user_id === userId).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  const streaks = deriveStreaks(own);
+  const buckets = {};
+  own.forEach(b => { const k = b.time_bucket || timeBucket(b.timestamp); buckets[k] = (buckets[k] || 0) + 1; });
+  const favoriteBucket = Object.entries(buckets).sort((a, b) => b[1] - a[1])[0]?.[0] || '—';
+  const temps = own.filter(b => b.temp_f != null).map(b => Number(b.temp_f));
+  const avgTemp = temps.length ? Math.round(temps.reduce((s, t) => s + t, 0) / temps.length) : null;
+  const notes = own.filter(b => (b.note || '').trim().length > 0).length;
+  const first = own[0]?.timestamp || null;
+  const weeks = first ? Math.max(1, (Date.now() - new Date(first).getTime()) / (7 * 24 * 60 * 60 * 1000)) : 1;
+  const points = unlocks
+    .filter(a => a.user_id === userId)
+    .map(a => achievements.find(x => x.id === a.achievement_type)?.points || 0)
+    .reduce((s, p) => s + p, 0);
+  return {
+    total: own.length,
+    streaks,
+    favoriteBucket,
+    avgTemp,
+    notes,
+    perWeek: own.length ? +(own.length / weeks).toFixed(1) : 0,
+    firstBust: first,
+    lastBust: own[own.length - 1]?.timestamp || null,
+    level: levelForXp(points),
+    bucketBreakdown: buckets
+  };
 }
 
 export function deriveAllTimeRecords(busts = []) {
@@ -189,11 +272,23 @@ export function deriveAllTimeRecords(busts = []) {
     const ad = new Date(a.timestamp); const bd = new Date(b.timestamp);
     return ad.getHours() * 60 + ad.getMinutes() - (bd.getHours() * 60 + bd.getMinutes());
   })[0];
+  const hottest = [...withTemp].sort((a, b) => Number(b.temp_f) - Number(a.temp_f))[0];
+  const nightCounts = new Map();
+  safeBusts.filter(b => timeBucket(b.timestamp) === 'Late Night').forEach(b => { const k = b.username || 'Unknown'; nightCounts.set(k, (nightCounts.get(k) || 0) + 1); });
+  const nightOwl = [...nightCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+  const wordsmith = [...safeBusts].filter(b => b.note).sort((a, b) => (b.note || '').length - (a.note || '').length)[0];
+  const byUser = new Map();
+  safeBusts.forEach(b => { const k = b.username || 'Unknown'; if (!byUser.has(k)) byUser.set(k, []); byUser.get(k).push(b); });
+  const streakKing = [...byUser.entries()].map(([name, list]) => ({ name, longest: deriveStreaks(list).longest })).sort((a, b) => b.longest - a.longest)[0];
 
   return [
     { id: 'volume_king', label: 'Volume King', value: volume?.[0] || '—', detail: volume ? `${volume[1]} total records` : 'No events yet', icon: 'Crown' },
     { id: 'coldest_bust', label: 'Coldest Bust', value: coldest ? `${Math.round(Number(coldest.temp_f))}°F` : '—', detail: coldest ? `${coldest.username || 'Unknown'} · ${timeBucket(coldest.timestamp)}` : 'Awaiting weather data', icon: 'Snowflake' },
     { id: 'pressure_peak', label: 'Pressure Peak', value: pressurePeak ? `${Math.round(Number(pressurePeak.pressure))} hPa` : '—', detail: pressurePeak ? `${pressurePeak.username || 'Unknown'} · ${timeBucket(pressurePeak.timestamp)}` : 'Awaiting pressure data', icon: 'Gauge' },
-    { id: 'earliest_bust', label: 'Earliest Bust', value: earliest ? new Date(earliest.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—', detail: earliest ? `${earliest.username || 'Unknown'} · ${timeBucket(earliest.timestamp)}` : 'No events yet', icon: 'AlarmClock' }
+    { id: 'earliest_bust', label: 'Earliest Bust', value: earliest ? new Date(earliest.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—', detail: earliest ? `${earliest.username || 'Unknown'} · ${timeBucket(earliest.timestamp)}` : 'No events yet', icon: 'AlarmClock' },
+    { id: 'hottest_bust', label: 'Hottest Bust', value: hottest ? `${Math.round(Number(hottest.temp_f))}°F` : '—', detail: hottest ? `${hottest.username || 'Unknown'} · ${timeBucket(hottest.timestamp)}` : 'Awaiting weather data', icon: 'Flame' },
+    { id: 'streak_king', label: 'Streak King', value: streakKing && streakKing.longest > 0 ? `${streakKing.longest}d` : '—', detail: streakKing ? `${streakKing.name} · consecutive days` : 'No events yet', icon: 'Repeat2' },
+    { id: 'night_owl', label: 'Night Owl', value: nightOwl?.[0] || '—', detail: nightOwl ? `${nightOwl[1]} late-night events` : 'No 12–4 AM activity', icon: 'Moon' },
+    { id: 'wordsmith', label: 'Wordsmith', value: wordsmith?.username || '—', detail: wordsmith ? `${wordsmith.note.length}-char field report` : 'No notes filed', icon: 'NotebookPen' }
   ];
 }

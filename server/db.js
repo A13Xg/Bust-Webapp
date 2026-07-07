@@ -15,27 +15,40 @@ function bustJoined(row) { const user = state.users.find(u => u.id === row.user_
 
 async function memoryQuery(text, params = []) {
   const sql = normalize(text);
+  if (sql === 'select 1') return { rows: [{ '?column?': 1 }] };
   if (sql.includes('drop table')) { resetMemory(); return { rows: [] }; }
-  if (sql.includes('create table') || sql.includes('create extension') || sql.includes('create index')) return { rows: [] };
+  if (sql.includes('create table') || sql.includes('create extension') || sql.includes('create index') || sql.includes('alter table')) return { rows: [] };
 
   if (sql.startsWith('insert into users')) {
     const [username, synthetic_email, password_hash, avatar_seed] = params;
     if (state.users.some(u => u.username.toLowerCase() === String(username).toLowerCase())) {
       const err = new Error('duplicate username'); err.code = '23505'; throw err;
     }
-    const row = { id: randomUUID(), username, synthetic_email, password_hash, avatar_seed, created_at: new Date().toISOString(), last_bust_timestamp: null };
+    const row = { id: randomUUID(), username, synthetic_email, password_hash, avatar_seed, created_at: new Date().toISOString(), last_bust_timestamp: null, tagline: null, showcase: null };
     state.users.push(row);
     return { rows: [clone(row)] };
   }
 
   if (sql.startsWith('select * from users where id=')) return { rows: state.users.filter(u => u.id === params[0]).map(clone) };
   if (sql.startsWith('select * from users where lower(username)=')) return { rows: state.users.filter(u => u.username.toLowerCase() === String(params[0]).toLowerCase()).map(clone) };
-  if (sql.startsWith('select id, username, avatar_seed, created_at, last_bust_timestamp from users')) {
-    return { rows: userPublicSort().map(({ id, username, avatar_seed, created_at, last_bust_timestamp }) => ({ id, username, avatar_seed, created_at, last_bust_timestamp })) };
+  if (sql.startsWith('select id, username, avatar_seed, created_at, last_bust_timestamp, tagline, showcase from users')) {
+    return { rows: userPublicSort().map(({ id, username, avatar_seed, created_at, last_bust_timestamp, tagline, showcase }) => ({ id, username, avatar_seed, created_at, last_bust_timestamp, tagline, showcase })) };
+  }
+  if (sql.startsWith('update users set tagline=')) {
+    const user = state.users.find(u => u.id === params[3]);
+    if (user) { user.tagline = params[0]; user.avatar_seed = params[1]; user.showcase = params[2]; }
+    return { rows: user ? [clone(user)] : [] };
   }
   if (sql.startsWith('select last_bust_timestamp from users where id=')) {
     const user = state.users.find(u => u.id === params[0]);
     return { rows: user ? [{ last_bust_timestamp: user.last_bust_timestamp }] : [] };
+  }
+
+  if (sql.startsWith('delete from users where id=')) {
+    state.users = state.users.filter(u => u.id !== params[0]);
+    state.busts = state.busts.filter(b => b.user_id !== params[0]);
+    state.achievements = state.achievements.filter(a => a.user_id !== params[0]);
+    return { rows: [] };
   }
 
   if (sql.startsWith('insert into busts')) {

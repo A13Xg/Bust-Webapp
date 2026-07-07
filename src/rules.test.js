@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { achievements, progressionCatalog, timeBucket, twoHoursRemainingMs, computeAchievementUnlocks, computeProgressionUnlocks, deriveProgressionSummary, deriveAllTimeRecords } from './rules.js';
+import { achievements, progressionCatalog, timeBucket, twoHoursRemainingMs, computeAchievementUnlocks, computeProgressionUnlocks, deriveProgressionSummary, deriveAllTimeRecords, deriveStreaks, levelForXp, derivePersonalStats, buildTrend } from './rules.js';
 
 describe('BUST rules', () => {
   it('labels time-of-day buckets', () => {
@@ -83,11 +83,85 @@ describe('BUST rules', () => {
 
     const records = deriveAllTimeRecords(busts);
 
-    expect(records.map(r => r.id)).toEqual(['volume_king', 'coldest_bust', 'pressure_peak', 'earliest_bust']);
+    expect(records.map(r => r.id)).toEqual(['volume_king', 'coldest_bust', 'pressure_peak', 'earliest_bust', 'hottest_bust', 'streak_king', 'night_owl', 'wordsmith']);
     expect(records[0].value).toBe('Lin');
     expect(records[0].detail).toContain('2 total');
     expect(records[1].value).toBe('35°F');
     expect(records[2].value).toBe('1030 hPa');
     expect(records[3].detail).toContain('Ada');
+    expect(records[4].value).toBe('91°F');
+    expect(records[5].value).toBe('2d');
+    expect(records[5].detail).toContain('Lin');
+  });
+
+  it('derives daily streaks from consecutive local days', () => {
+    const now = new Date();
+    const day = (offset, hour = 12) => { const d = new Date(now); d.setDate(d.getDate() - offset); d.setHours(hour); return { timestamp: d.toISOString() }; };
+    expect(deriveStreaks([])).toEqual({ current: 0, longest: 0 });
+    expect(deriveStreaks([day(0), day(1), day(2)])).toEqual({ current: 3, longest: 3 });
+    expect(deriveStreaks([day(0), day(2), day(3)]).current).toBe(1);
+    expect(deriveStreaks([day(5), day(6), day(7)]).current).toBe(0);
+    expect(deriveStreaks([day(5), day(6), day(7)]).longest).toBe(3);
+  });
+
+  it('maps XP totals to satirical levels with progress', () => {
+    expect(levelForXp(0)).toMatchObject({ level: 1, title: 'Dripling' });
+    expect(levelForXp(200)).toMatchObject({ level: 3, title: 'Pressure Adept' });
+    expect(levelForXp(99999)).toMatchObject({ level: 10, title: 'The White Whale', pct: 100, nextAt: null });
+    expect(levelForXp(75).pct).toBeGreaterThan(0);
+  });
+
+  it('derives personal profile stats', () => {
+    const busts = [
+      { user_id: 'u1', timestamp: new Date(2026, 0, 1, 6).toISOString(), temp_f: 40, note: 'yes', time_bucket: 'Early Morning' },
+      { user_id: 'u1', timestamp: new Date(2026, 0, 1, 22).toISOString(), temp_f: 60, note: '', time_bucket: 'Prime Night' },
+      { user_id: 'u1', timestamp: new Date(2026, 0, 2, 22).toISOString(), temp_f: 80, note: 'longer', time_bucket: 'Prime Night' },
+      { user_id: 'u2', timestamp: new Date(2026, 0, 2, 10).toISOString(), temp_f: 200 }
+    ];
+    const stats = derivePersonalStats('u1', busts, [{ user_id: 'u1', achievement_type: 'first_release' }]);
+    expect(stats.total).toBe(3);
+    expect(stats.favoriteBucket).toBe('Prime Night');
+    expect(stats.avgTemp).toBe(60);
+    expect(stats.notes).toBe(2);
+    expect(stats.level.points).toBe(10);
+    expect(stats.streaks.longest).toBe(2);
+  });
+
+  it('builds a fixed-length daily trend series', () => {
+    const now = new Date(2026, 5, 30, 12);
+    const busts = [{ timestamp: new Date(2026, 5, 30, 8).toISOString() }, { timestamp: new Date(2026, 5, 29, 8).toISOString() }, { timestamp: new Date(2026, 5, 29, 9).toISOString() }];
+    const trend = buildTrend(busts, 7, now);
+    expect(trend).toHaveLength(7);
+    expect(trend[6].count).toBe(1);
+    expect(trend[5].count).toBe(2);
+    expect(trend[0].count).toBe(0);
+  });
+
+  it('registers expansion items with unique ids', async () => {
+    const { expansionItems } = await import('./expansion.js');
+    expect(expansionItems.length).toBeGreaterThanOrEqual(50);
+    const ids = achievements.map(a => a.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const it of expansionItems) expect(it).toEqual(expect.objectContaining({ micon: expect.any(String), tier: expect.any(String), kind: expect.stringMatching(/achievement|badge/), category: expect.any(String), points: expect.any(Number) }));
+  });
+
+  it('unlocks expansion timing, environment, and note achievements', () => {
+    const busts = [
+      { id: 'b1', user_id: 'u1', timestamp: new Date(2026, 4, 3, 0, 2).toISOString(), pressure: 985, note: 'x'.repeat(240) },
+      { id: 'b2', user_id: 'u1', timestamp: new Date(2026, 4, 4, 9, 0).toISOString(), pressure: 1000, note: 'thou art busted' }
+    ];
+    const ids = computeAchievementUnlocks('u1', busts, []);
+    expect(ids).toEqual(expect.arrayContaining(['midnight_strike', 'on_the_dot', 'storm_chaser', 'novelist', 'shakespeare']));
+    expect(ids).not.toContain('minute_hand');
+  });
+
+  it('unlocks squad-play achievements from the group feed', () => {
+    const t = new Date(2026, 4, 5, 18, 0, 0);
+    const busts = [
+      { id: 'a', user_id: 'u2', timestamp: new Date(t.getTime() - 30000).toISOString() },
+      { id: 'b', user_id: 'u1', timestamp: t.toISOString() }
+    ];
+    const ids = computeAchievementUnlocks('u1', busts, [], { userCount: 3 });
+    expect(ids).toEqual(expect.arrayContaining(['first_responder', 'synchronized_swimmers']));
   });
 });

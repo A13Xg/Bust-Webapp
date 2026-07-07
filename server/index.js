@@ -6,6 +6,7 @@ import jwt from 'jsonwebtoken';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
 import { query } from './db.js';
+import { SCHEMA_SQL } from './schema.js';
 
 const app = express();
 const server = createServer(app);
@@ -13,15 +14,28 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 const PORT = process.env.PORT || 8787;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
 const COOLDOWN_MS = 2 * 60 * 60 * 1000;
+const NETWORK_CODES = new Set(['ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNRESET']);
 
 app.use(cors());
 app.use(express.json({ limit: '64kb' }));
 
 function sign(user) { return jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' }); }
-function publicUser(u) { return { id: u.id, username: u.username, avatar_seed: u.avatar_seed, created_at: u.created_at, last_bust_timestamp: u.last_bust_timestamp }; }
+function publicUser(u) { return { id: u.id, username: u.username, avatar_seed: u.avatar_seed, created_at: u.created_at, last_bust_timestamp: u.last_bust_timestamp, tagline: u.tagline || null, showcase: u.showcase || null }; }
 function timeBucket(date = new Date()) { const h = date.getHours(); if (h < 4) return 'Late Night'; if (h < 8) return 'Early Morning'; if (h < 12) return 'Morning'; if (h < 17) return 'Afternoon'; if (h < 21) return 'Evening'; return 'Prime Night'; }
+function dbErrorResponse(res, e) {
+  console.error('[db]', e.code || '', e.message);
+  if (NETWORK_CODES.has(e.code)) return res.status(503).json({ error: 'Database is unreachable; check DATABASE_URL or network/DNS access' });
+  if (e.code === '42P01') return res.status(503).json({ error: 'Database tables are missing — run: npm run db:migrate' });
+  if (e.code === '42703') return res.status(503).json({ error: 'Database schema is outdated — run: npm run db:migrate' });
+  return res.status(500).json({ error: `Database error${e.code ? ` (${e.code})` : ''}: ${e.message}` });
+}
 async function auth(req, res, next) { try { const raw = (req.headers.authorization || '').replace(/^Bearer\s+/i, ''); if (!raw) throw new Error('missing'); const payload = jwt.verify(raw, JWT_SECRET); const { rows } = await query('select * from users where id=$1', [payload.id]); if (!rows[0]) throw new Error('missing user'); req.user = rows[0]; next(); } catch { res.status(401).json({ error: 'Authentication required' }); } }
 async function bustRows(limit = 300) { const { rows } = await query(`select b.*, u.username, u.avatar_seed from busts b join users u on u.id=b.user_id order by b.timestamp desc limit $1`, [limit]); return rows; }
+
+app.get('/api/health', async (req, res) => {
+  try { await query('select 1', []); res.json({ ok: true, db: 'connected' }); }
+  catch (e) { res.status(503).json({ ok: false, db: 'unreachable', code: e.code || null, message: e.message }); }
+});
 
 app.post('/api/signup', async (req, res) => {
   const { username = '', password = '', inviteCode = '' } = req.body || {};
@@ -34,43 +48,70 @@ app.post('/api/signup', async (req, res) => {
     const { rows } = await query('insert into users (username, synthetic_email, password_hash, avatar_seed) values ($1,$2,$3,$4) returning *', [username.trim(), synthetic, hash, `${username}-${Date.now()}`]);
     res.json({ user: publicUser(rows[0]), token: sign(rows[0]) });
   } catch (e) {
-    if (e.code === 'ENOTFOUND' || e.code === 'ECONNREFUSED' || e.code === 'ETIMEDOUT') return res.status(503).json({ error: 'Database is unreachable; check DATABASE_URL or network/DNS access' });
-    res.status(409).json({ error: 'Username already exists' });
+    // Only a genuine unique-constraint violation means the name is taken.
+    if (e.code === '23505') return res.status(409).json({ error: 'Username already exists' });
+    dbErrorResponse(res, e);
   }
 });
 
 app.post('/api/login', async (req, res) => {
   const { username = '', password = '' } = req.body || {};
-  const { rows } = await query('select * from users where lower(username)=lower($1)', [username.trim()]);
-  const user = rows[0];
-  if (!user || !(await bcrypt.compare(password, user.password_hash))) return res.status(401).json({ error: 'Invalid username or password' });
-  res.json({ user: publicUser(user), token: sign(user) });
+  try {
+    const { rows } = await query('select * from users where lower(username)=lower($1)', [username.trim()]);
+    const user = rows[0];
+    if (!user || !(await bcrypt.compare(password, user.password_hash))) return res.status(401).json({ error: 'Invalid username or password' });
+    res.json({ user: publicUser(user), token: sign(user) });
+  } catch (e) { dbErrorResponse(res, e); }
 });
 app.get('/api/me', auth, (req, res) => res.json({ user: publicUser(req.user) }));
 app.get('/api/dashboard', auth, async (req, res) => {
-  const [users, busts, achievements] = await Promise.all([
-    query('select id, username, avatar_seed, created_at, last_bust_timestamp from users order by created_at asc'),
-    bustRows(),
-    query('select * from achievements order by unlocked_at desc')
-  ]);
-  res.json({ users: users.rows, busts, achievements: achievements.rows });
+  try {
+    const [users, busts, achievements] = await Promise.all([
+      query('select id, username, avatar_seed, created_at, last_bust_timestamp, tagline, showcase from users order by created_at asc'),
+      bustRows(),
+      query('select * from achievements order by unlocked_at desc')
+    ]);
+    res.json({ users: users.rows, busts, achievements: achievements.rows });
+  } catch (e) { dbErrorResponse(res, e); }
 });
 app.post('/api/bust', auth, async (req, res) => {
-  const fresh = (await query('select last_bust_timestamp from users where id=$1', [req.user.id])).rows[0];
-  if (fresh?.last_bust_timestamp && Date.now() - new Date(fresh.last_bust_timestamp).getTime() < COOLDOWN_MS) return res.status(429).json({ error: 'Cooldown is still active' });
-  const now = new Date();
-  const { note = '', temp_f = null, pressure = null, lat = null, long = null, city = null } = req.body || {};
-  const { rows } = await query(`insert into busts (user_id, timestamp, note, temp_f, pressure, lat, long, city, time_bucket) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *`, [req.user.id, now, String(note).slice(0, 240), temp_f, pressure, lat, long, city, timeBucket(now)]);
-  await query('update users set last_bust_timestamp=$1 where id=$2', [now, req.user.id]);
-  const full = (await query(`select b.*, u.username, u.avatar_seed from busts b join users u on u.id=b.user_id where b.id=$1`, [rows[0].id])).rows[0];
-  broadcast({ type: 'bust', bust: full });
-  res.json({ bust: full });
+  try {
+    const fresh = (await query('select last_bust_timestamp from users where id=$1', [req.user.id])).rows[0];
+    if (fresh?.last_bust_timestamp && Date.now() - new Date(fresh.last_bust_timestamp).getTime() < COOLDOWN_MS) return res.status(429).json({ error: 'Cooldown is still active' });
+    const now = new Date();
+    const { note = '', temp_f = null, pressure = null, lat = null, long = null, city = null } = req.body || {};
+    const { rows } = await query(`insert into busts (user_id, timestamp, note, temp_f, pressure, lat, long, city, time_bucket) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *`, [req.user.id, now, String(note).slice(0, 240), temp_f, pressure, lat, long, city, timeBucket(now)]);
+    await query('update users set last_bust_timestamp=$1 where id=$2', [now, req.user.id]);
+    const full = (await query(`select b.*, u.username, u.avatar_seed from busts b join users u on u.id=b.user_id where b.id=$1`, [rows[0].id])).rows[0];
+    broadcast({ type: 'bust', bust: full });
+    res.json({ bust: full });
+  } catch (e) { dbErrorResponse(res, e); }
+});
+app.patch('/api/profile', auth, async (req, res) => {
+  try {
+    const tagline = req.body?.tagline != null ? String(req.body.tagline).slice(0, 80) : req.user.tagline;
+    const avatar_seed = req.body?.avatar_seed != null ? String(req.body.avatar_seed).slice(0, 64) : req.user.avatar_seed;
+    // showcase: up to 3 comma-separated achievement ids pinned beside the username
+    const showcase = req.body?.showcase != null ? String(req.body.showcase).split(',').filter(Boolean).slice(0, 3).join(',') : req.user.showcase;
+    const { rows } = await query('update users set tagline=$1, avatar_seed=$2, showcase=$3 where id=$4 returning *', [tagline, avatar_seed, showcase, req.user.id]);
+    broadcast({ type: 'profile', user: publicUser(rows[0]) });
+    res.json({ user: publicUser(rows[0]) });
+  } catch (e) { dbErrorResponse(res, e); }
+});
+app.delete('/api/account', auth, async (req, res) => {
+  try {
+    await query('delete from users where id=$1', [req.user.id]); // busts/achievements cascade
+    broadcast({ type: 'user_deleted', id: req.user.id });
+    res.json({ ok: true });
+  } catch (e) { dbErrorResponse(res, e); }
 });
 app.post('/api/achievements', auth, async (req, res) => {
-  const types = Array.isArray(req.body?.types) ? req.body.types.slice(0, 11) : [];
-  for (const t of types) await query('insert into achievements (user_id, achievement_type) values ($1,$2) on conflict do nothing', [req.user.id, t]);
-  const { rows } = await query('select * from achievements order by unlocked_at desc');
-  res.json({ achievements: rows });
+  try {
+    const types = Array.isArray(req.body?.types) ? req.body.types.slice(0, 60) : [];
+    for (const t of types) await query('insert into achievements (user_id, achievement_type) values ($1,$2) on conflict do nothing', [req.user.id, t]);
+    const { rows } = await query('select * from achievements order by unlocked_at desc');
+    res.json({ achievements: rows });
+  } catch (e) { dbErrorResponse(res, e); }
 });
 
 function broadcast(obj) { const data = JSON.stringify(obj); for (const client of wss.clients) if (client.readyState === 1) client.send(data); }
@@ -78,9 +119,12 @@ wss.on('connection', (ws, req) => { try { const token = new URL(req.url, 'http:/
 
 app.use((err, req, res, next) => {
   console.error(err);
-  if (err?.code === 'ENOTFOUND' || err?.code === 'ECONNREFUSED' || err?.code === 'ETIMEDOUT') return res.status(503).json({ error: 'Database is unreachable; check DATABASE_URL or network/DNS access' });
+  if (NETWORK_CODES.has(err?.code)) return res.status(503).json({ error: 'Database is unreachable; check DATABASE_URL or network/DNS access' });
   res.status(500).json({ error: 'Internal server error' });
 });
 
-server.listen(PORT, () => console.log(`BUST API listening on ${PORT}`));
+// Ensure schema exists on boot so a fresh database never masquerades as "username taken".
+try { await query(SCHEMA_SQL, []); console.log('Schema verified.'); }
+catch (e) { console.warn(`Schema check skipped (${e.code || e.message}) — run npm run db:migrate once the database is reachable.`); }
 
+server.listen(PORT, () => console.log(`BUST API listening on ${PORT}`));
