@@ -231,6 +231,9 @@ header.top-bar{top:0;left:0;right:0;padding:10px clamp(12px,3vw,26px) 10px;paddi
 @media(max-width:700px){.charging .bust-button span{font-size:clamp(26px,9vw,44px)}}
 
 /* icons stay invisible until the symbol font is ready (prevents raw ligature text) */
+.icon-stack{display:inline-flex;align-items:center;justify-content:center;line-height:1;vertical-align:-.12em}
+.icon-stack .msym{font-size:inherit;color:inherit}
+.icon-fallback{display:none;font:900 .8em Tahoma,Verdana,sans-serif;line-height:1;color:inherit;text-transform:none;letter-spacing:0}
 .msym{opacity:0;transition:opacity .12s ease}
 .msym-ready .msym{opacity:1}
 
@@ -261,8 +264,16 @@ header.top-bar{top:0;left:0;right:0;padding:10px clamp(12px,3vw,26px) 10px;paddi
 .mf-button.danger:disabled{opacity:.45}
 .logout-row{display:flex;justify-content:center;gap:12px;flex-wrap:wrap}
 
-/* if the bundled icon font ever fails, keep icons hidden instead of showing ligature codes */
-.msym-failed .msym{opacity:0!important}
+/* if the bundled icon font ever fails, show symbolic fallbacks instead of raw ligature codes */
+.msym-failed .msym{display:none!important}
+.msym-failed .icon-fallback{display:inline-flex;align-items:center;justify-content:center}
+
+/* common floating back-to-top button for long overlays */
+.scroll-top{position:sticky;z-index:7;left:calc(100% - 72px);bottom:18px;width:54px;height:54px;display:grid;place-items:center;margin:-18px 18px 0 auto;border:1px solid rgba(255,94,0,.55);border-radius:50%;background:linear-gradient(180deg,rgba(23,23,29,.96),rgba(10,10,11,.96));color:var(--orange);box-shadow:0 14px 40px rgba(0,0,0,.5),0 0 28px rgba(255,94,0,.18);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:transform .14s ease,filter .18s ease,border-color .18s ease}
+.scroll-top:hover{filter:brightness(1.15);border-color:rgba(255,94,0,.85)}
+.scroll-top:active{transform:scale(.94)}
+.scroll-top svg{width:25px;height:25px;stroke-width:3}
+@media(max-width:700px){.scroll-top{bottom:calc(14px + env(safe-area-inset-bottom,0px));right:14px;width:50px;height:50px}}
 
 /* login-time permission gate */
 .perm-status{display:grid;gap:10px;justify-items:center;margin:4px 0}
