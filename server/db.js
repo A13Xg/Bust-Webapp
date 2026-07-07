@@ -6,6 +6,24 @@ const { Pool } = pg;
 const useMemory = process.env.DEMO_DB === '1' || !process.env.DATABASE_URL;
 const state = { users: [], busts: [], achievements: [] };
 
+function sslConfig(connectionString) {
+  const mode = (process.env.PGSSLMODE || '').toLowerCase();
+  if (['disable', 'allow', 'prefer'].includes(mode)) return false;
+  if (['require', 'verify-ca', 'verify-full'].includes(mode)) return { rejectUnauthorized: false };
+
+  try {
+    const url = new URL(connectionString);
+    const sslMode = (url.searchParams.get('sslmode') || '').toLowerCase();
+    if (['disable', 'allow', 'prefer'].includes(sslMode)) return false;
+    if (['require', 'verify-ca', 'verify-full'].includes(sslMode)) return { rejectUnauthorized: false };
+    if (['localhost', '127.0.0.1', '::1'].includes(url.hostname)) return false;
+  } catch {
+    // If DATABASE_URL is not parseable as a URL, keep the production-safe default.
+  }
+
+  return { rejectUnauthorized: false };
+}
+
 function normalize(sql) { return String(sql).replace(/\s+/g, ' ').trim().toLowerCase(); }
 function clone(row) { return row ? { ...row } : row; }
 function maybeNumber(value) { return value == null || value === '' ? null : Number(value); }
@@ -82,6 +100,6 @@ async function memoryQuery(text, params = []) {
   throw new Error(`Unsupported memory query: ${String(text).slice(0, 160)}`);
 }
 
-export const pool = useMemory ? { query: memoryQuery, end: async () => {} } : new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+export const pool = useMemory ? { query: memoryQuery, end: async () => {} } : new Pool({ connectionString: process.env.DATABASE_URL, ssl: sslConfig(process.env.DATABASE_URL) });
 export async function query(text, params) { return pool.query(text, params); }
 if (useMemory) console.warn('Using in-memory demo database. Set DATABASE_URL and omit DEMO_DB=1 for persistent PostgreSQL.');

@@ -37,6 +37,7 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: postgresql://bust:bust@127.0.0.1:5432/bust_test
+      PGSSLMODE: disable
       JWT_SECRET: ci-test-secret
     steps:
       - uses: actions/checkout@v4
