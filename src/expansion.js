@@ -53,6 +53,7 @@ const pressureBand = p => { p = Number(p); if (!Number.isFinite(p)) return null;
 const tempBand = t => { t = Number(t); if (!Number.isFinite(t)) return null; if (t < 32) return 0; if (t < 52) return 1; if (t < 72) return 2; if (t < 92) return 3; return 4; };
 const elevation = b => { const e = Number(b.elevation_ft); return Number.isFinite(e) ? e : null; };
 const elevationBand = b => { const e = elevation(b); if (e == null) return null; if (e < 100) return 0; if (e < 1000) return 1; if (e < 5280) return 2; if (e < 8000) return 3; return 4; };
+const tideSign = b => { const t = Number(b.tide_ft); return Number.isFinite(t) ? (t >= 0 ? 1 : -1) : null; };
 const homeCityMax = own => { const c = {}; cities(own).forEach(x => c[x] = (c[x] || 0) + 1); return Math.max(0, ...Object.values(c)); };
 function citiesInWeek(own, need) { const pts = own.filter(b => b.city); for (let i = 0; i < pts.length; i++) { const set = new Set(); for (let j = i; j < pts.length; j++) { if (D(pts[j].timestamp) - D(pts[i].timestamp) > 7 * MS_DAY) break; set.add(pts[j].city.trim()); } if (set.size >= need) return true; } return false; }
 const EMOJI = /\p{Extended_Pictographic}/u;
@@ -131,6 +132,9 @@ export const expansionCatalog = [
   item('sea_level_scout', 'Sea-Level Scout', 'Bust below 100ft ASL.', 'bronze', 'achievement', 'Expedition', 'waves', 25, c => c.own.some(b => elevation(b) != null && elevation(b) < 100)),
   item('thin_air', 'Thin Air', 'Bust above 5,280ft ASL.', 'gold', 'achievement', 'Expedition', 'landscape_2', 70, c => c.own.some(b => elevation(b) >= 5280)),
   item('cloudline_climber', 'Cloudline Climber', 'Bust above 8,000ft ASL.', 'platinum', 'achievement', 'Expedition', 'filter_hdr', 115, c => c.own.some(b => elevation(b) >= 8000)),
+  item('low_tide_logger', 'Low Tide Logger', 'Bust during a Low Tide.', 'bronze', 'achievement', 'Expedition', 'water', 20, c => c.own.some(b => tideSign(b) === -1)),
+  item('high_tide_hero', 'High Tide Hero', 'Bust during a High Tide.', 'bronze', 'achievement', 'Expedition', 'tsunami', 20, c => c.own.some(b => tideSign(b) === 1)),
+  item('tidal_duality', 'Tidal Duality', 'Bust during both a High and a Low Tide (lifetime).', 'silver', 'achievement', 'Expedition', 'sailing', 35, c => { const s = new Set(c.own.map(tideSign).filter(v => v != null)); return s.has(1) && s.has(-1); }),
   // ---- Expedition — badges
   item('weather_vane', 'Weather Vane', 'Bust in all five pressure bands.', 'platinum', 'badge', 'Expedition', 'air', 180, c => new Set(c.own.map(b => pressureBand(b.pressure)).filter(v => v != null)).size >= 5),
   item('thermometer_breaker', 'Thermometer Breaker', 'Bust in all five temperature bands.', 'platinum', 'badge', 'Expedition', 'device_thermostat', 185, c => new Set(c.own.map(b => tempBand(b.temp_f)).filter(v => v != null)).size >= 5),
@@ -141,6 +145,9 @@ export const expansionCatalog = [
   item('mile_high_club', 'Mile-High Club', '5 busts above 5,280ft ASL.', 'platinum', 'badge', 'Expedition', 'altitude', 170, c => count(c.own, b => elevation(b) >= 5280) >= 5),
   item('altitude_sampler', 'Altitude Sampler', 'Bust in 3 elevation bands.', 'gold', 'badge', 'Expedition', 'terrain', 120, c => new Set(c.own.map(elevationBand).filter(v => v != null)).size >= 3),
   item('summit_circuit', 'Summit Circuit', '10 busts above 8,000ft ASL.', 'mythic', 'badge', 'Expedition', 'hiking', 280, c => count(c.own, b => elevation(b) >= 8000) >= 10),
+  item('low_tide_regular', 'Low Tide Regular', '10 busts during a Low Tide.', 'gold', 'badge', 'Expedition', 'anchor', 100, c => count(c.own, b => tideSign(b) === -1) >= 10),
+  item('high_tide_devotee', 'High Tide Devotee', '10 busts during a High Tide.', 'gold', 'badge', 'Expedition', 'beach_access', 100, c => count(c.own, b => tideSign(b) === 1) >= 10),
+  item('tide_master', 'Tide Master', '10 busts during Low Tide and 10 during High Tide.', 'platinum', 'badge', 'Expedition', 'waves', 170, c => count(c.own, b => tideSign(b) === -1) >= 10 && count(c.own, b => tideSign(b) === 1) >= 10),
 
   // ---- Wordsmith — achievements
   item('emoji_artist', 'Emoji Artist', 'A note made only of emoji (3+).', 'bronze', 'achievement', 'Wordsmith', 'mood', 20, c => notes(c.own).some(emojiOnly)),

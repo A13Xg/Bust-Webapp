@@ -132,7 +132,7 @@ const staticBackend = {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) throw new Error('Not signed in');
     const now = new Date();
-    const row = { user_id: user.id, timestamp: now.toISOString(), note: String(payload.note || '').slice(0, 240), temp_f: payload.temp_f, pressure: payload.pressure, lat: payload.lat, long: payload.long, city: payload.city, elevation_ft: payload.elevation_ft, time_bucket: timeBucket(now) };
+    const row = { user_id: user.id, timestamp: now.toISOString(), note: String(payload.note || '').slice(0, 240), temp_f: payload.temp_f, pressure: payload.pressure, lat: payload.lat, long: payload.long, city: payload.city, elevation_ft: payload.elevation_ft, tide_ft: payload.tide_ft, time_bucket: timeBucket(now) };
     const { data, error } = await sb.from('busts').insert(row).select().single();
     if (error) throw new Error(/policy|row-level/i.test(error.message) ? 'Cooldown is still active' : error.message);
     return joinBust(data);
