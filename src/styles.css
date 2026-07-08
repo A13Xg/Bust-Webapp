@@ -51,7 +51,7 @@
 .reroll svg{width:19px;height:19px}
 .xp-bar{position:relative;margin-top:12px;height:22px;min-width:min(360px,70vw);background:rgba(255,255,255,.07);border:1px solid var(--line);overflow:hidden}
 .xp-bar i{position:absolute;inset:0 auto 0 0;background:linear-gradient(90deg,var(--orange),var(--orange2));box-shadow:0 0 26px rgba(255,94,0,.6)}
-.xp-bar b{position:relative;z-index:1;display:block;text-align:center;font:900 11px Tahoma,sans-serif;line-height:22px;letter-spacing:1.5px;color:var(--ink);mix-blend-mode:difference}
+.xp-bar b{position:relative;z-index:1;display:block;text-align:center;font:900 11px Tahoma,sans-serif;line-height:22px;letter-spacing:1.5px;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.85)}
 .tagline-edit{display:grid;gap:8px;color:var(--muted);font:900 11px Tahoma,sans-serif;letter-spacing:2px}
 .tagline-edit div{display:flex;gap:10px}
 .tagline-edit input{flex:1;background:#09090b;border:1px solid var(--line);color:var(--ink);padding:13px;font:800 14px Tahoma,sans-serif;outline:0}
@@ -152,14 +152,18 @@ header.top-bar{top:0;left:0;right:0;padding:10px clamp(12px,3vw,26px) 10px;paddi
 .scatter-wrap{position:relative}
 .scatter-tip{position:absolute;transform:translate(-50%,-130%);background:#17171d;border:1px solid rgba(255,94,0,.5);color:var(--ink);font:800 12px Tahoma,sans-serif;padding:7px 11px;white-space:nowrap;pointer-events:none;box-shadow:0 10px 30px rgba(0,0,0,.5);z-index:5}
 .metric-sub{display:block;font-style:normal;color:var(--muted);font:700 11px Tahoma,sans-serif;letter-spacing:1px}
-.note-back{position:fixed;inset:0;z-index:97;background:rgba(0,0,0,.68);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:grid;place-items:center;padding:18px}
-.note-pop{position:relative;width:min(520px,94vw);padding:40px 26px 24px;display:grid;gap:12px;text-align:left}
+.note-back{position:fixed;inset:0;z-index:97;background:rgba(0,0,0,.68);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);padding:18px}
+.note-pop{position:fixed;translate:-50% -50%;width:min(520px,94vw);padding:40px 26px 24px;display:grid;gap:12px;text-align:left}
 .note-pop h2{text-align:center;margin:0;font-size:clamp(24px,7vw,34px);letter-spacing:-1px}
 .detail-empty-note{color:var(--muted);font-weight:800;margin:10px 0 12px}
 .add-note-btn{margin:0 auto 16px;padding:11px 16px;font-size:12px;letter-spacing:1.5px}
 .add-note-btn svg{width:17px;height:17px}
 .note-actions{display:flex;gap:10px;justify-content:flex-end}
 .note-actions .mf-button.ghost{background:transparent;color:var(--orange);border:1px solid rgba(255,94,0,.5);box-shadow:none}
+
+/* continuous button outlines: no clipped/cut border breaks */
+.mf-button{clip-path:none;border-radius:0;box-shadow:0 0 30px rgba(255,94,0,.25),inset 0 0 0 1px rgba(255,94,0,.22)}
+.mf-button.ghost{box-shadow:inset 0 0 0 1px rgba(255,94,0,.35)}
 
 
 /* ===== Material Symbols + expansion achievement cards ===== */
@@ -250,6 +254,7 @@ header.top-bar{top:0;left:0;right:0;padding:10px clamp(12px,3vw,26px) 10px;paddi
 .meta-pill,.tier-chip,.ach-xp{display:inline-flex;align-items:center;justify-content:center;line-height:1}
 .tier-chip b{line-height:1}
 .ach-detail-meta{align-items:center}
+.ach-progress{width:min(360px,82vw);min-width:0;margin:4px 0 2px}
 .picker-box{position:relative;width:min(480px,94vw);max-height:86dvh;display:grid;gap:12px;padding:44px 24px 22px}
 .picker-box h2{margin:0;text-align:center}
 .picker-list{overflow:auto;max-height:48dvh;display:grid;gap:8px;padding:2px}
