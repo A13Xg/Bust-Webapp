@@ -284,9 +284,9 @@ function Profile({user,setUser,busts,unlocks,users,onOpen,debug,mythicIds}){
     {showPicker&&<ShowcasePicker unlocked={myBadges} initial={pinned} onClose={()=>setShowPicker(false)} onApply={ids=>{ setShowPicker(false); if(ids.join(',')!==(user.showcase||'')) save({showcase:ids.join(',')}); }}/>}
     <h2 className="section-title">Recent Activity</h2>
     <div className="feed two-col">{own.length?own.slice(0,10).map(b=><BustCard key={b.id} b={b} onOpen={onOpen} mythicIds={mythicIds}/>):<EmptyState text="Your ledger is empty. The button awaits."/>}</div>
-    <div className="logout-row"><button className="mf-button ghost" onClick={async()=>{await backend.logout();setUser(null)}}><LogOut/> LOG OUT</button><button className="mf-button ghost danger" onContextMenu={e=>{ if(!import.meta.env.DEV) return; e.preventDefault(); setCtx({x:e.clientX,y:e.clientY}); }} onClick={()=>setConfirmDel(true)}>DELETE ACCOUNT</button></div>
-    {import.meta.env.DEV && ctx&&<div className="debug-context" style={{left:ctx.x,top:ctx.y}}><button onClick={()=>{setCtx(null);setShowDebug(true);}}>Debug Menu</button><button onClick={()=>setCtx(null)}>Close</button></div>}
-    {import.meta.env.DEV && showDebug&&debug&&<DebugMenu debug={debug} onClose={()=>setShowDebug(false)}/>}
+    <div className="logout-row"><button className="mf-button ghost" onClick={async()=>{await backend.logout();setUser(null)}}><LogOut/> LOG OUT</button><button className="mf-button ghost danger" onContextMenu={e=>{ e.preventDefault(); setCtx({x:e.clientX,y:e.clientY}); }} onClick={()=>setConfirmDel(true)}>DELETE ACCOUNT</button></div>
+    {ctx&&<div className="debug-context" style={{left:ctx.x,top:ctx.y}}><button onClick={()=>{setCtx(null);setShowDebug(true);}}>Debug Menu</button><button onClick={()=>setCtx(null)}>Close</button></div>}
+    {showDebug&&debug&&<DebugMenu debug={debug} onClose={()=>setShowDebug(false)}/>}
     {confirmDel&&<DeleteAccountModal onClose={()=>setConfirmDel(false)} onDeleted={()=>setUser(null)}/>}
   </div> }
 function Alerts({busts,onOpen,mythicIds}){ return <div className="feed two-col">{busts.map(b=><BustCard key={b.id} b={b} onOpen={onOpen} mythicIds={mythicIds}/>)}</div> }
