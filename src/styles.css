@@ -212,10 +212,11 @@ header.top-bar{top:0;left:0;right:0;padding:10px clamp(12px,3vw,26px) 10px;paddi
 .ach-status{font-style:normal;margin-top:6px;font:900 12px Tahoma,sans-serif;letter-spacing:3px;color:#6a6a72}
 .ach-status.on{color:var(--tier);text-shadow:0 0 18px color-mix(in srgb,var(--tier),transparent 55%)}
 .ach-detail.won{box-shadow:0 0 0 1px color-mix(in srgb,var(--tier),transparent 45%),0 30px 90px rgba(0,0,0,.6),0 0 60px color-mix(in srgb,var(--tier),transparent 70%)}
-.name-badges{display:inline-flex;gap:4px;margin-left:8px;vertical-align:-3px}
-.name-badge{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;font-style:normal;background:color-mix(in srgb,var(--tier),transparent 82%);border:1px solid color-mix(in srgb,var(--tier),transparent 45%)}
-.name-badge .msym{font-size:13px;color:var(--tier)}
-.profile-id h2 .name-badges{vertical-align:2px}
+.name-badges{display:inline-flex;align-items:center;gap:4px;margin-left:8px;vertical-align:middle}
+.name-badge{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;font-style:normal;line-height:1;background:color-mix(in srgb,var(--tier),transparent 82%);border:1px solid color-mix(in srgb,var(--tier),transparent 45%)}
+.name-badge .icon-stack{display:grid;width:100%;height:100%;place-items:center;vertical-align:0;line-height:1}
+.name-badge .msym{display:block;font-size:13px;line-height:1;color:var(--tier)}
+.profile-id h2 .name-badges{vertical-align:middle}
 .profile-id h2 .name-badge{width:26px;height:26px}
 .profile-id h2 .name-badge .msym{font-size:17px}
 .showcase-hint{margin:-8px 0 12px;color:var(--muted);font-weight:700;font-size:13px}
@@ -280,3 +281,10 @@ header.top-bar{top:0;left:0;right:0;padding:10px clamp(12px,3vw,26px) 10px;paddi
 .perm-status span{display:inline-flex;align-items:center;gap:8px;font:900 12px Tahoma,sans-serif;letter-spacing:1.5px;color:var(--muted)}
 .perm-status span.ok{color:#57cc99}
 .perm-status .msym{font-size:19px}
+
+/* All-time record cards: use large native emoji, never raw Material Symbol ligature text. */
+.record-card{display:grid;grid-template-rows:auto auto auto 1fr;align-content:start;gap:10px;padding:22px;min-height:190px}
+.record-card .record-emoji{font-size:clamp(42px,6vw,64px);line-height:1;filter:drop-shadow(0 0 18px rgba(255,94,0,.35));margin-bottom:2px}
+.record-card span{margin-top:0;color:var(--muted);font:900 11px Tahoma,sans-serif;letter-spacing:2px;text-transform:uppercase}
+.record-card strong{margin-top:0;font-size:30px;line-height:1;font-weight:900}
+.record-card p{margin:0;color:var(--muted);font-weight:700}
