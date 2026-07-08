@@ -224,18 +224,22 @@ header.top-bar{top:0;left:0;right:0;padding:10px clamp(12px,3vw,26px) 10px;paddi
 .ach-status.on{color:var(--tier);text-shadow:0 0 18px color-mix(in srgb,var(--tier),transparent 55%)}
 .ach-detail.won{box-shadow:0 0 0 1px color-mix(in srgb,var(--tier),transparent 45%),0 30px 90px rgba(0,0,0,.6),0 0 60px color-mix(in srgb,var(--tier),transparent 70%)}
 .name-badges{display:inline-flex;align-items:center;gap:4px;margin-left:8px;vertical-align:middle}
-.name-badge{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;font-style:normal;line-height:1;background:color-mix(in srgb,var(--tier),transparent 82%);border:1px solid color-mix(in srgb,var(--tier),transparent 45%)}
+.name-badge{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:0;font-style:normal;line-height:1;background:transparent;border:0;color:var(--tier);filter:drop-shadow(0 0 8px color-mix(in srgb,var(--tier),transparent 45%))}
 .name-badge .icon-stack{display:grid;width:100%;height:100%;place-items:center;vertical-align:0;line-height:1}
-.name-badge .msym{display:block;font-size:13px;line-height:1;color:var(--tier)}
+.name-badge .msym{display:block;font-size:16px;line-height:1;color:var(--tier)}
 .profile-id h2 .name-badges{vertical-align:middle}
 .profile-id h2 .name-badge{width:26px;height:26px}
-.profile-id h2 .name-badge .msym{font-size:17px}
+.profile-id h2 .name-badge .msym{font-size:22px}
 .showcase-hint{margin:-8px 0 12px;color:var(--muted);font-weight:700;font-size:13px}
 .showcase-badge{color:var(--ink);transition:transform .14s ease,box-shadow .2s ease}
+.showcase-badge .badge-medal,.showcase-badge .badge-medal.tier-plated{width:56px;height:56px;background:none!important;background-image:none!important;border:0;box-shadow:none;overflow:visible;color:var(--badge,#ff8a2a)}
+.showcase-badge .badge-medal .icon-stack{color:var(--badge,#ff8a2a);filter:drop-shadow(0 0 12px color-mix(in srgb,var(--badge,#ff8a2a),transparent 45%))}
+.showcase-badge .badge-medal .msym,.showcase-badge .badge-medal.tier-plated .msym{font-size:42px;color:var(--badge,#ff8a2a);filter:none}
+.showcase-badge .badge-medal .icon-fallback{font-size:42px;color:var(--badge,#ff8a2a)}
 .showcase-badge:hover{transform:translateY(-2px)}
 .showcase-badge.selected{box-shadow:0 0 0 2px var(--orange),0 0 30px rgba(255,94,0,.35)}
 .showcase-badge.selected small{color:var(--orange)}
-@supports not (color:color-mix(in srgb,red,blue)){.name-badge{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.25)}}
+@supports not (color:color-mix(in srgb,red,blue)){.name-badge{background:transparent;border:0;filter:none}}
 @media(max-width:700px){.ach-detail{padding:38px 18px 22px}.ach-detail .ach-icon.xl{font-size:88px}}
 
 /* charge-phase label sized to stay inside the circle */

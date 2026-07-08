@@ -70,8 +70,8 @@ async function memoryQuery(text, params = []) {
   }
 
   if (sql.startsWith('insert into busts')) {
-    const [user_id, timestamp, note, temp_f, pressure, lat, long, city, time_bucket] = params;
-    const row = { id: randomUUID(), user_id, timestamp: new Date(timestamp).toISOString(), note, temp_f: maybeNumber(temp_f), pressure: maybeNumber(pressure), lat: maybeNumber(lat), long: maybeNumber(long), city, time_bucket };
+    const [user_id, timestamp, note, temp_f, pressure, lat, long, city, elevation_ft, time_bucket] = params;
+    const row = { id: randomUUID(), user_id, timestamp: new Date(timestamp).toISOString(), note, temp_f: maybeNumber(temp_f), pressure: maybeNumber(pressure), lat: maybeNumber(lat), long: maybeNumber(long), city, elevation_ft: maybeNumber(elevation_ft), time_bucket };
     state.busts.push(row);
     return { rows: [clone(row)] };
   }

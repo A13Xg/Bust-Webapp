@@ -27,8 +27,10 @@ create table if not exists public.busts (
   lat numeric,
   long numeric,
   city text,
+  elevation_ft numeric,
   time_bucket text not null
 );
+alter table public.busts add column if not exists elevation_ft numeric;
 
 create table if not exists public.achievements (
   id uuid primary key default gen_random_uuid(),
