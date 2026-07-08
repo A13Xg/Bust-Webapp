@@ -89,7 +89,7 @@ const staticBackend = {
     return myProfile(sb);
   },
   async signup({ username, password, inviteCode }) {
-    if (inviteCode !== 'Bust4Me') throw new Error('Invalid invite-code');
+    if (inviteCode !== 'Bust4Me') throw new Error('That secret handshake is not on the list.');
     if (!/^[a-zA-Z0-9_ -]{2,32}$/.test(username)) throw new Error('Username must be 2-32 simple characters');
     if (String(password).length < 6) throw new Error('Password must be at least 6 characters');
     const sb = await getSupa();

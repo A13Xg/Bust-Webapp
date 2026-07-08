@@ -39,7 +39,7 @@ app.get('/api/health', async (req, res) => {
 
 app.post('/api/signup', async (req, res) => {
   const { username = '', password = '', inviteCode = '' } = req.body || {};
-  if (inviteCode !== 'Bust4Me') return res.status(403).json({ error: 'Invalid invite-code' });
+  if (inviteCode !== 'Bust4Me') return res.status(403).json({ error: 'That secret handshake is not on the list.' });
   if (!/^[a-zA-Z0-9_ -]{2,32}$/.test(username)) return res.status(400).json({ error: 'Username must be 2-32 simple characters' });
   if (String(password).length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
   const hash = await bcrypt.hash(password, 12);
