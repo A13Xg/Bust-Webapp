@@ -105,9 +105,10 @@ describe('BUST rules', () => {
   });
 
   it('maps XP totals to satirical levels with progress', () => {
-    expect(levelForXp(0)).toMatchObject({ level: 1, title: 'Dripling' });
-    expect(levelForXp(200)).toMatchObject({ level: 3, title: 'Pressure Adept' });
-    expect(levelForXp(99999)).toMatchObject({ level: 10, title: 'The White Whale', pct: 100, nextAt: null });
+    expect(levelForXp(0)).toMatchObject({ level: 1, title: 'Little Swimmer' });
+    expect(levelForXp(60)).toMatchObject({ level: 2, title: 'Puddle Scout' });
+    expect(levelForXp(200)).toMatchObject({ level: 3, title: 'Bust Buddy' });
+    expect(levelForXp(99999)).toMatchObject({ level: 10, title: 'MasterBaiter', pct: 100, nextAt: null, nextTitle: null });
     expect(levelForXp(75).pct).toBeGreaterThan(0);
   });
 

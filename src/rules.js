@@ -187,16 +187,16 @@ export function deriveProgressionSummary(userId, existing = []) {
 
 // ---------- Level / XP system ----------
 export const levelTitles = [
-  { at: 0, title: 'Dripling' },
+  { at: 0, title: 'Little Swimmer' },
   { at: 60, title: 'Puddle Scout' },
-  { at: 150, title: 'Pressure Adept' },
-  { at: 300, title: 'Splash Sergeant' },
-  { at: 520, title: 'Cream Colonel' },
-  { at: 820, title: 'Torrent Tactician' },
-  { at: 1200, title: 'Geyser General' },
-  { at: 1700, title: 'Monsoon Marshal' },
-  { at: 2400, title: 'Tsunami Emperor' },
-  { at: 3300, title: 'The White Whale' }
+  { at: 150, title: 'Bust Buddy' },
+  { at: 300, title: 'Splash Cadet' },
+  { at: 520, title: 'Pressure Pumper' },
+  { at: 820, title: 'Foam Ranger' },
+  { at: 1200, title: 'Release Captain' },
+  { at: 1700, title: 'Gush Guardian' },
+  { at: 2400, title: 'Bust Baron' },
+  { at: 3300, title: 'MasterBaiter' }
 ];
 
 export function levelForXp(points = 0) {

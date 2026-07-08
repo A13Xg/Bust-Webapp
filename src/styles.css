@@ -36,8 +36,15 @@
 .donut-legend span{color:var(--muted);margin-left:auto;font-variant-numeric:tabular-nums}
 .leader{grid-template-columns:42px 42px 1fr auto}
 .leader .sparkline{align-self:center}
-.leader em{grid-column:3/-1}
+.leader em{grid-column:3/-1;display:flex;align-items:center;flex-wrap:wrap;gap:6px}
 .streak-pill{display:inline-block;margin-left:8px;font:900 10px Tahoma,sans-serif;font-style:normal;color:#170900;background:linear-gradient(90deg,var(--orange2),var(--orange));padding:2px 7px;border-radius:999px;vertical-align:2px}
+.lvl-chip{font:900 10px Tahoma,sans-serif;font-style:normal;color:#170900;background:linear-gradient(90deg,var(--orange2),var(--orange));padding:3px 8px;border-radius:999px;letter-spacing:.5px;white-space:nowrap}
+.lvl-rank-name{color:var(--ink);font-weight:900;text-transform:uppercase;font-size:11px;letter-spacing:1px}
+
+/* MasterBaiter rank: warm pearlescent shimmer on the operator's name */
+.rank-mythic{background:linear-gradient(90deg,var(--orange) 0%,#ffd166 18%,#fff8e7 36%,var(--orange2) 54%,#fff8e7 72%,#ffd166 86%,var(--orange) 100%);background-size:300% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent;filter:drop-shadow(0 0 10px rgba(255,209,102,.45));animation:rank-shimmer 5s linear infinite}
+@keyframes rank-shimmer{0%{background-position:0% 50%}100%{background-position:300% 50%}}
+@media(prefers-reduced-motion:reduce){.rank-mythic{animation:none;background-position:0% 50%}}
 
 /* ===== Profile page ===== */
 .profile-page{padding-bottom:48px}
@@ -227,6 +234,7 @@ header.top-bar{top:0;left:0;right:0;padding:10px clamp(12px,3vw,26px) 10px;paddi
 .name-badge{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:0;font-style:normal;line-height:1;background:transparent;border:0;color:var(--tier);filter:drop-shadow(0 0 8px color-mix(in srgb,var(--tier),transparent 45%))}
 .name-badge .icon-stack{display:grid;width:100%;height:100%;place-items:center;vertical-align:0;line-height:1}
 .name-badge .msym{display:block;font-size:16px;line-height:1;color:var(--tier)}
+.bust-card strong{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .profile-id h2 .name-badges{vertical-align:middle}
 .profile-id h2 .name-badge{width:26px;height:26px}
 .profile-id h2 .name-badge .msym{font-size:22px}
@@ -246,12 +254,10 @@ header.top-bar{top:0;left:0;right:0;padding:10px clamp(12px,3vw,26px) 10px;paddi
 .charging .bust-button span{font-size:clamp(30px,7vw,58px);letter-spacing:-1px;line-height:1.1;padding:0 10%}
 @media(max-width:700px){.charging .bust-button span{font-size:clamp(26px,9vw,44px)}}
 
-/* icons stay invisible until the symbol font is ready (prevents raw ligature text) */
+/* MIcon renders exactly one of these at a time (see useMsymStatus in main.jsx) */
 .icon-stack{display:inline-flex;align-items:center;justify-content:center;line-height:1;vertical-align:-.12em}
 .icon-stack .msym{font-size:inherit;color:inherit}
-.icon-fallback{display:none;font:900 .8em Tahoma,Verdana,sans-serif;line-height:1;color:inherit;text-transform:none;letter-spacing:0}
-.msym{opacity:0;transition:opacity .12s ease}
-.msym-ready .msym{opacity:1}
+.icon-fallback{font:900 .8em Tahoma,Verdana,sans-serif;line-height:1;color:inherit;text-transform:none;letter-spacing:0}
 
 
 /* ===== Showcase picker, delete-account modal, centered meta pills ===== */
@@ -280,10 +286,14 @@ header.top-bar{top:0;left:0;right:0;padding:10px clamp(12px,3vw,26px) 10px;paddi
 .mf-button.ghost.danger{background:transparent;color:#ff6a55;border-color:rgba(255,42,0,.5)}
 .mf-button.danger:disabled{opacity:.45}
 .logout-row{display:flex;justify-content:center;gap:12px;flex-wrap:wrap}
+.debug-context{position:fixed;z-index:110;display:grid;min-width:150px;background:#101014;border:1px solid rgba(255,94,0,.45);box-shadow:0 18px 50px rgba(0,0,0,.55);padding:6px}
+.debug-context button{background:transparent;border:0;color:var(--ink);text-align:left;padding:10px 12px;font-weight:900;letter-spacing:1px}
+.debug-context button:hover{background:rgba(255,94,0,.14);color:var(--orange)}
+.debug-box{position:relative;width:min(760px,96vw);max-height:88dvh;overflow:auto;padding:44px 24px 22px;display:grid;gap:14px}
+.debug-box h2{margin:0;text-align:center}.debug-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.debug-grid label,.debug-note{display:grid;gap:6px;color:var(--muted);font:900 11px Tahoma,sans-serif;letter-spacing:1.5px;text-transform:uppercase}.debug-grid input,.debug-note textarea,.debug-unlock select{background:#09090b;border:1px solid var(--line);color:var(--ink);padding:11px;font:800 14px Tahoma,sans-serif;outline:0}.debug-note textarea{min-height:96px;resize:vertical;text-transform:none;letter-spacing:0}.debug-unlock{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center}.debug-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;color:var(--muted);font:800 12px Tahoma,sans-serif}
+@media(max-width:700px){.debug-grid,.debug-unlock{grid-template-columns:1fr}.debug-box{padding:40px 16px 18px}}
 
-/* if the bundled icon font ever fails, show symbolic fallbacks instead of raw ligature codes */
-.msym-failed .msym{display:none!important}
-.msym-failed .icon-fallback{display:inline-flex;align-items:center;justify-content:center}
+.icon-fallback{display:inline-flex;align-items:center;justify-content:center}
 
 /* common floating back-to-top button for long overlays */
 .scroll-top{position:sticky;z-index:7;left:calc(100% - 72px);bottom:18px;width:54px;height:54px;display:grid;place-items:center;margin:-18px 18px 0 auto;border:1px solid rgba(255,94,0,.55);border-radius:50%;background:linear-gradient(180deg,rgba(23,23,29,.96),rgba(10,10,11,.96));color:var(--orange);box-shadow:0 14px 40px rgba(0,0,0,.5),0 0 28px rgba(255,94,0,.18);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:transform .14s ease,filter .18s ease,border-color .18s ease}
