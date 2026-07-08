@@ -51,6 +51,8 @@ function perfectMonth(own) { const byMonth = {}; own.forEach(b => { const d = D(
 const daysWithTwo = own => { const c = {}; own.forEach(b => { const k = todayKey(b.timestamp); c[k] = (c[k] || 0) + 1; }); return Object.values(c).filter(n => n >= 2).length; };
 const pressureBand = p => { p = Number(p); if (!Number.isFinite(p)) return null; if (p < 990) return 0; if (p < 1005) return 1; if (p < 1015) return 2; if (p < 1025) return 3; return 4; };
 const tempBand = t => { t = Number(t); if (!Number.isFinite(t)) return null; if (t < 32) return 0; if (t < 52) return 1; if (t < 72) return 2; if (t < 92) return 3; return 4; };
+const elevation = b => { const e = Number(b.elevation_ft); return Number.isFinite(e) ? e : null; };
+const elevationBand = b => { const e = elevation(b); if (e == null) return null; if (e < 100) return 0; if (e < 1000) return 1; if (e < 5280) return 2; if (e < 8000) return 3; return 4; };
 const homeCityMax = own => { const c = {}; cities(own).forEach(x => c[x] = (c[x] || 0) + 1); return Math.max(0, ...Object.values(c)); };
 function citiesInWeek(own, need) { const pts = own.filter(b => b.city); for (let i = 0; i < pts.length; i++) { const set = new Set(); for (let j = i; j < pts.length; j++) { if (D(pts[j].timestamp) - D(pts[i].timestamp) > 7 * MS_DAY) break; set.add(pts[j].city.trim()); } if (set.size >= need) return true; } return false; }
 const EMOJI = /\p{Extended_Pictographic}/u;
@@ -126,6 +128,9 @@ export const expansionCatalog = [
   item('border_runner', 'Border Runner', 'Bust 100+ miles from your previous bust.', 'gold', 'achievement', 'Expedition', 'route', 65, c => legs(c.own).some(m => m >= 100)),
   item('home_base', 'Home Base', '10 busts from the same city.', 'silver', 'achievement', 'Expedition', 'home', 45, c => homeCityMax(c.own) >= 10),
   item('freezing_point', 'Freezing Point', 'Bust at exactly 32°F (±0.5°).', 'gold', 'achievement', 'Expedition', 'ac_unit', 60, c => c.own.some(b => Math.abs(Number(b.temp_f) - 32) <= 0.5)),
+  item('sea_level_scout', 'Sea-Level Scout', 'Bust below 100ft ASL.', 'bronze', 'achievement', 'Expedition', 'waves', 25, c => c.own.some(b => elevation(b) != null && elevation(b) < 100)),
+  item('thin_air', 'Thin Air', 'Bust above 5,280ft ASL.', 'gold', 'achievement', 'Expedition', 'landscape_2', 70, c => c.own.some(b => elevation(b) >= 5280)),
+  item('cloudline_climber', 'Cloudline Climber', 'Bust above 8,000ft ASL.', 'platinum', 'achievement', 'Expedition', 'filter_hdr', 115, c => c.own.some(b => elevation(b) >= 8000)),
   // ---- Expedition — badges
   item('weather_vane', 'Weather Vane', 'Bust in all five pressure bands.', 'platinum', 'badge', 'Expedition', 'air', 180, c => new Set(c.own.map(b => pressureBand(b.pressure)).filter(v => v != null)).size >= 5),
   item('thermometer_breaker', 'Thermometer Breaker', 'Bust in all five temperature bands.', 'platinum', 'badge', 'Expedition', 'device_thermostat', 185, c => new Set(c.own.map(b => tempBand(b.temp_f)).filter(v => v != null)).size >= 5),
@@ -133,6 +138,9 @@ export const expansionCatalog = [
   item('climate_diplomat', 'Climate Diplomat', '3 different cities in one week.', 'mythic', 'badge', 'Expedition', 'public', 260, c => citiesInWeek(c.own, 3)),
   item('odometer', 'Odometer', '500 cumulative miles between bust locations.', 'platinum', 'badge', 'Expedition', 'speed', 170, c => legs(c.own).reduce((s, m) => s + m, 0) >= 500),
   item('landmark_legend', 'Landmark Legend', '25 busts from your home city.', 'gold', 'badge', 'Expedition', 'location_city', 120, c => homeCityMax(c.own) >= 25),
+  item('mile_high_club', 'Mile-High Club', '5 busts above 5,280ft ASL.', 'platinum', 'badge', 'Expedition', 'altitude', 170, c => count(c.own, b => elevation(b) >= 5280) >= 5),
+  item('altitude_sampler', 'Altitude Sampler', 'Bust in 3 elevation bands.', 'gold', 'badge', 'Expedition', 'terrain', 120, c => new Set(c.own.map(elevationBand).filter(v => v != null)).size >= 3),
+  item('summit_circuit', 'Summit Circuit', '10 busts above 8,000ft ASL.', 'mythic', 'badge', 'Expedition', 'hiking', 280, c => count(c.own, b => elevation(b) >= 8000) >= 10),
 
   // ---- Wordsmith — achievements
   item('emoji_artist', 'Emoji Artist', 'A note made only of emoji (3+).', 'bronze', 'achievement', 'Wordsmith', 'mood', 20, c => notes(c.own).some(emojiOnly)),

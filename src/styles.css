@@ -36,8 +36,15 @@
 .donut-legend span{color:var(--muted);margin-left:auto;font-variant-numeric:tabular-nums}
 .leader{grid-template-columns:42px 42px 1fr auto}
 .leader .sparkline{align-self:center}
-.leader em{grid-column:3/-1}
+.leader em{grid-column:3/-1;display:flex;align-items:center;flex-wrap:wrap;gap:6px}
 .streak-pill{display:inline-block;margin-left:8px;font:900 10px Tahoma,sans-serif;font-style:normal;color:#170900;background:linear-gradient(90deg,var(--orange2),var(--orange));padding:2px 7px;border-radius:999px;vertical-align:2px}
+.lvl-chip{font:900 10px Tahoma,sans-serif;font-style:normal;color:#170900;background:linear-gradient(90deg,var(--orange2),var(--orange));padding:3px 8px;border-radius:999px;letter-spacing:.5px;white-space:nowrap}
+.lvl-rank-name{color:var(--ink);font-weight:900;text-transform:uppercase;font-size:11px;letter-spacing:1px}
+
+/* MasterBaiter rank: warm pearlescent shimmer on the operator's name */
+.rank-mythic{background:linear-gradient(90deg,var(--orange) 0%,#ffd166 18%,#fff8e7 36%,var(--orange2) 54%,#fff8e7 72%,#ffd166 86%,var(--orange) 100%);background-size:300% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent;filter:drop-shadow(0 0 10px rgba(255,209,102,.45));animation:rank-shimmer 5s linear infinite}
+@keyframes rank-shimmer{0%{background-position:0% 50%}100%{background-position:300% 50%}}
+@media(prefers-reduced-motion:reduce){.rank-mythic{animation:none;background-position:0% 50%}}
 
 /* ===== Profile page ===== */
 .profile-page{padding-bottom:48px}
@@ -51,7 +58,7 @@
 .reroll svg{width:19px;height:19px}
 .xp-bar{position:relative;margin-top:12px;height:22px;min-width:min(360px,70vw);background:rgba(255,255,255,.07);border:1px solid var(--line);overflow:hidden}
 .xp-bar i{position:absolute;inset:0 auto 0 0;background:linear-gradient(90deg,var(--orange),var(--orange2));box-shadow:0 0 26px rgba(255,94,0,.6)}
-.xp-bar b{position:relative;z-index:1;display:block;text-align:center;font:900 11px Tahoma,sans-serif;line-height:22px;letter-spacing:1.5px;color:var(--ink);mix-blend-mode:difference}
+.xp-bar b{position:relative;z-index:1;display:block;text-align:center;font:900 11px Tahoma,sans-serif;line-height:22px;letter-spacing:1.5px;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.85)}
 .tagline-edit{display:grid;gap:8px;color:var(--muted);font:900 11px Tahoma,sans-serif;letter-spacing:2px}
 .tagline-edit div{display:flex;gap:10px}
 .tagline-edit input{flex:1;background:#09090b;border:1px solid var(--line);color:var(--ink);padding:13px;font:800 14px Tahoma,sans-serif;outline:0}
@@ -152,14 +159,18 @@ header.top-bar{top:0;left:0;right:0;padding:10px clamp(12px,3vw,26px) 10px;paddi
 .scatter-wrap{position:relative}
 .scatter-tip{position:absolute;transform:translate(-50%,-130%);background:#17171d;border:1px solid rgba(255,94,0,.5);color:var(--ink);font:800 12px Tahoma,sans-serif;padding:7px 11px;white-space:nowrap;pointer-events:none;box-shadow:0 10px 30px rgba(0,0,0,.5);z-index:5}
 .metric-sub{display:block;font-style:normal;color:var(--muted);font:700 11px Tahoma,sans-serif;letter-spacing:1px}
-.note-back{position:fixed;inset:0;z-index:97;background:rgba(0,0,0,.68);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:grid;place-items:center;padding:18px}
-.note-pop{position:relative;width:min(520px,94vw);padding:40px 26px 24px;display:grid;gap:12px;text-align:left}
+.note-back{position:fixed;inset:0;z-index:97;background:rgba(0,0,0,.68);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);padding:18px}
+.note-pop{position:fixed;translate:-50% -50%;width:min(520px,94vw);padding:40px 26px 24px;display:grid;gap:12px;text-align:left}
 .note-pop h2{text-align:center;margin:0;font-size:clamp(24px,7vw,34px);letter-spacing:-1px}
 .detail-empty-note{color:var(--muted);font-weight:800;margin:10px 0 12px}
 .add-note-btn{margin:0 auto 16px;padding:11px 16px;font-size:12px;letter-spacing:1.5px}
 .add-note-btn svg{width:17px;height:17px}
 .note-actions{display:flex;gap:10px;justify-content:flex-end}
 .note-actions .mf-button.ghost{background:transparent;color:var(--orange);border:1px solid rgba(255,94,0,.5);box-shadow:none}
+
+/* continuous button outlines: no clipped/cut border breaks */
+.mf-button{clip-path:none;border-radius:0;box-shadow:0 0 30px rgba(255,94,0,.25),inset 0 0 0 1px rgba(255,94,0,.22)}
+.mf-button.ghost{box-shadow:inset 0 0 0 1px rgba(255,94,0,.35)}
 
 
 /* ===== Material Symbols + expansion achievement cards ===== */
@@ -220,36 +231,40 @@ header.top-bar{top:0;left:0;right:0;padding:10px clamp(12px,3vw,26px) 10px;paddi
 .ach-status.on{color:var(--tier);text-shadow:0 0 18px color-mix(in srgb,var(--tier),transparent 55%)}
 .ach-detail.won{box-shadow:0 0 0 1px color-mix(in srgb,var(--tier),transparent 45%),0 30px 90px rgba(0,0,0,.6),0 0 60px color-mix(in srgb,var(--tier),transparent 70%)}
 .name-badges{display:inline-flex;align-items:center;gap:4px;margin-left:8px;vertical-align:middle}
-.name-badge{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:50%;font-style:normal;line-height:1;background:color-mix(in srgb,var(--tier),transparent 82%);border:1px solid color-mix(in srgb,var(--tier),transparent 45%)}
+.name-badge{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:0;font-style:normal;line-height:1;background:transparent;border:0;color:var(--tier);filter:drop-shadow(0 0 8px color-mix(in srgb,var(--tier),transparent 45%))}
 .name-badge .icon-stack{display:grid;width:100%;height:100%;place-items:center;vertical-align:0;line-height:1}
-.name-badge .msym{display:block;font-size:13px;line-height:1;color:var(--tier)}
+.name-badge .msym{display:block;font-size:16px;line-height:1;color:var(--tier)}
+.bust-card strong{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .profile-id h2 .name-badges{vertical-align:middle}
 .profile-id h2 .name-badge{width:26px;height:26px}
-.profile-id h2 .name-badge .msym{font-size:17px}
+.profile-id h2 .name-badge .msym{font-size:22px}
 .showcase-hint{margin:-8px 0 12px;color:var(--muted);font-weight:700;font-size:13px}
 .showcase-badge{color:var(--ink);transition:transform .14s ease,box-shadow .2s ease}
+.showcase-badge .badge-medal,.showcase-badge .badge-medal.tier-plated{width:56px;height:56px;background:none!important;background-image:none!important;border:0;box-shadow:none;overflow:visible;color:var(--badge,#ff8a2a)}
+.showcase-badge .badge-medal .icon-stack{color:var(--badge,#ff8a2a);filter:drop-shadow(0 0 12px color-mix(in srgb,var(--badge,#ff8a2a),transparent 45%))}
+.showcase-badge .badge-medal .msym,.showcase-badge .badge-medal.tier-plated .msym{font-size:42px;color:var(--badge,#ff8a2a);filter:none}
+.showcase-badge .badge-medal .icon-fallback{font-size:42px;color:var(--badge,#ff8a2a)}
 .showcase-badge:hover{transform:translateY(-2px)}
 .showcase-badge.selected{box-shadow:0 0 0 2px var(--orange),0 0 30px rgba(255,94,0,.35)}
 .showcase-badge.selected small{color:var(--orange)}
-@supports not (color:color-mix(in srgb,red,blue)){.name-badge{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.25)}}
+@supports not (color:color-mix(in srgb,red,blue)){.name-badge{background:transparent;border:0;filter:none}}
 @media(max-width:700px){.ach-detail{padding:38px 18px 22px}.ach-detail .ach-icon.xl{font-size:88px}}
 
 /* charge-phase label sized to stay inside the circle */
 .charging .bust-button span{font-size:clamp(30px,7vw,58px);letter-spacing:-1px;line-height:1.1;padding:0 10%}
 @media(max-width:700px){.charging .bust-button span{font-size:clamp(26px,9vw,44px)}}
 
-/* icons stay invisible until the symbol font is ready (prevents raw ligature text) */
+/* MIcon renders exactly one of these at a time (see useMsymStatus in main.jsx) */
 .icon-stack{display:inline-flex;align-items:center;justify-content:center;line-height:1;vertical-align:-.12em}
 .icon-stack .msym{font-size:inherit;color:inherit}
-.icon-fallback{display:none;font:900 .8em Tahoma,Verdana,sans-serif;line-height:1;color:inherit;text-transform:none;letter-spacing:0}
-.msym{opacity:0;transition:opacity .12s ease}
-.msym-ready .msym{opacity:1}
+.icon-fallback{font:900 .8em Tahoma,Verdana,sans-serif;line-height:1;color:inherit;text-transform:none;letter-spacing:0}
 
 
 /* ===== Showcase picker, delete-account modal, centered meta pills ===== */
 .meta-pill,.tier-chip,.ach-xp{display:inline-flex;align-items:center;justify-content:center;line-height:1}
 .tier-chip b{line-height:1}
 .ach-detail-meta{align-items:center}
+.ach-progress{width:min(360px,82vw);min-width:0;margin:4px 0 2px}
 .picker-box{position:relative;width:min(480px,94vw);max-height:86dvh;display:grid;gap:12px;padding:44px 24px 22px}
 .picker-box h2{margin:0;text-align:center}
 .picker-list{overflow:auto;max-height:48dvh;display:grid;gap:8px;padding:2px}
@@ -271,10 +286,14 @@ header.top-bar{top:0;left:0;right:0;padding:10px clamp(12px,3vw,26px) 10px;paddi
 .mf-button.ghost.danger{background:transparent;color:#ff6a55;border-color:rgba(255,42,0,.5)}
 .mf-button.danger:disabled{opacity:.45}
 .logout-row{display:flex;justify-content:center;gap:12px;flex-wrap:wrap}
+.debug-context{position:fixed;z-index:110;display:grid;min-width:150px;background:#101014;border:1px solid rgba(255,94,0,.45);box-shadow:0 18px 50px rgba(0,0,0,.55);padding:6px}
+.debug-context button{background:transparent;border:0;color:var(--ink);text-align:left;padding:10px 12px;font-weight:900;letter-spacing:1px}
+.debug-context button:hover{background:rgba(255,94,0,.14);color:var(--orange)}
+.debug-box{position:relative;width:min(760px,96vw);max-height:88dvh;overflow:auto;padding:44px 24px 22px;display:grid;gap:14px}
+.debug-box h2{margin:0;text-align:center}.debug-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.debug-grid label,.debug-note{display:grid;gap:6px;color:var(--muted);font:900 11px Tahoma,sans-serif;letter-spacing:1.5px;text-transform:uppercase}.debug-grid input,.debug-note textarea,.debug-unlock select{background:#09090b;border:1px solid var(--line);color:var(--ink);padding:11px;font:800 14px Tahoma,sans-serif;outline:0}.debug-note textarea{min-height:96px;resize:vertical;text-transform:none;letter-spacing:0}.debug-unlock{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center}.debug-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;color:var(--muted);font:800 12px Tahoma,sans-serif}
+@media(max-width:700px){.debug-grid,.debug-unlock{grid-template-columns:1fr}.debug-box{padding:40px 16px 18px}}
 
-/* if the bundled icon font ever fails, show symbolic fallbacks instead of raw ligature codes */
-.msym-failed .msym{display:none!important}
-.msym-failed .icon-fallback{display:inline-flex;align-items:center;justify-content:center}
+.icon-fallback{display:inline-flex;align-items:center;justify-content:center}
 
 /* common floating back-to-top button for long overlays */
 .scroll-top{position:sticky;z-index:7;left:calc(100% - 72px);bottom:18px;width:54px;height:54px;display:grid;place-items:center;margin:-18px 18px 0 auto;border:1px solid rgba(255,94,0,.55);border-radius:50%;background:linear-gradient(180deg,rgba(23,23,29,.96),rgba(10,10,11,.96));color:var(--orange);box-shadow:0 14px 40px rgba(0,0,0,.5),0 0 28px rgba(255,94,0,.18);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);transition:transform .14s ease,filter .18s ease,border-color .18s ease}

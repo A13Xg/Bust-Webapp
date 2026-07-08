@@ -105,9 +105,10 @@ describe('BUST rules', () => {
   });
 
   it('maps XP totals to satirical levels with progress', () => {
-    expect(levelForXp(0)).toMatchObject({ level: 1, title: 'Dripling' });
-    expect(levelForXp(200)).toMatchObject({ level: 3, title: 'Pressure Adept' });
-    expect(levelForXp(99999)).toMatchObject({ level: 10, title: 'The White Whale', pct: 100, nextAt: null });
+    expect(levelForXp(0)).toMatchObject({ level: 1, title: 'Little Swimmer' });
+    expect(levelForXp(60)).toMatchObject({ level: 2, title: 'Puddle Scout' });
+    expect(levelForXp(200)).toMatchObject({ level: 3, title: 'Bust Buddy' });
+    expect(levelForXp(99999)).toMatchObject({ level: 10, title: 'MasterBaiter', pct: 100, nextAt: null, nextTitle: null });
     expect(levelForXp(75).pct).toBeGreaterThan(0);
   });
 
@@ -153,6 +154,23 @@ describe('BUST rules', () => {
     const ids = computeAchievementUnlocks('u1', busts, []);
     expect(ids).toEqual(expect.arrayContaining(['midnight_strike', 'on_the_dot', 'storm_chaser', 'novelist', 'shakespeare']));
     expect(ids).not.toContain('minute_hand');
+  });
+
+  it('unlocks elevation achievements and badges from altitude tracking', () => {
+    const highBusts = Array.from({ length: 5 }, (_, i) => ({
+      id: `high-${i}`,
+      user_id: 'u1',
+      timestamp: new Date(2026, 4, i + 1, 9, 0).toISOString(),
+      elevation_ft: 5600
+    }));
+    const variedBusts = [
+      { id: 'low', user_id: 'u1', timestamp: new Date(2026, 5, 1, 8).toISOString(), elevation_ft: 42 },
+      { id: 'mid', user_id: 'u1', timestamp: new Date(2026, 5, 2, 8).toISOString(), elevation_ft: 1500 },
+      { id: 'alpine', user_id: 'u1', timestamp: new Date(2026, 5, 3, 8).toISOString(), elevation_ft: 8500 }
+    ];
+
+    expect(computeAchievementUnlocks('u1', highBusts, [])).toEqual(expect.arrayContaining(['thin_air', 'mile_high_club']));
+    expect(computeAchievementUnlocks('u1', variedBusts, [])).toEqual(expect.arrayContaining(['sea_level_scout', 'altitude_sampler']));
   });
 
   it('unlocks squad-play achievements from the group feed', () => {

@@ -79,8 +79,8 @@ app.post('/api/bust', auth, async (req, res) => {
     const fresh = (await query('select last_bust_timestamp from users where id=$1', [req.user.id])).rows[0];
     if (fresh?.last_bust_timestamp && Date.now() - new Date(fresh.last_bust_timestamp).getTime() < COOLDOWN_MS) return res.status(429).json({ error: 'Cooldown is still active' });
     const now = new Date();
-    const { note = '', temp_f = null, pressure = null, lat = null, long = null, city = null } = req.body || {};
-    const { rows } = await query(`insert into busts (user_id, timestamp, note, temp_f, pressure, lat, long, city, time_bucket) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning *`, [req.user.id, now, String(note).slice(0, 240), temp_f, pressure, lat, long, city, timeBucket(now)]);
+    const { note = '', temp_f = null, pressure = null, lat = null, long = null, city = null, elevation_ft = null } = req.body || {};
+    const { rows } = await query(`insert into busts (user_id, timestamp, note, temp_f, pressure, lat, long, city, elevation_ft, time_bucket) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning *`, [req.user.id, now, String(note).slice(0, 240), temp_f, pressure, lat, long, city, elevation_ft, timeBucket(now)]);
     await query('update users set last_bust_timestamp=$1 where id=$2', [now, req.user.id]);
     const full = (await query(`select b.*, u.username, u.avatar_seed from busts b join users u on u.id=b.user_id where b.id=$1`, [rows[0].id])).rows[0];
     broadcast({ type: 'bust', bust: full });
