@@ -87,6 +87,16 @@ app.post('/api/bust', auth, async (req, res) => {
     res.json({ bust: full });
   } catch (e) { dbErrorResponse(res, e); }
 });
+app.patch('/api/bust/:id/note', auth, async (req, res) => {
+  try {
+    const note = String(req.body?.note || '').slice(0, 240);
+    const { rows } = await query('update busts set note=$1 where id=$2 and user_id=$3 returning *', [note, req.params.id, req.user.id]);
+    if (!rows[0]) return res.status(404).json({ error: 'Bust not found' });
+    const full = (await query(`select b.*, u.username, u.avatar_seed from busts b join users u on u.id=b.user_id where b.id=$1`, [rows[0].id])).rows[0];
+    broadcast({ type: 'bust', bust: full });
+    res.json({ bust: full });
+  } catch (e) { dbErrorResponse(res, e); }
+});
 app.patch('/api/profile', auth, async (req, res) => {
   try {
     const tagline = req.body?.tagline != null ? String(req.body.tagline).slice(0, 80) : req.user.tagline;

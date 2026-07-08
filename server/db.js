@@ -83,6 +83,11 @@ async function memoryQuery(text, params = []) {
   if (sql.includes('from busts b join users u') && sql.includes('where b.id=')) {
     return { rows: state.busts.filter(b => b.id === params[0]).map(bustJoined) };
   }
+  if (sql.startsWith('update busts set note=')) {
+    const bust = state.busts.find(b => b.id === params[1] && b.user_id === params[2]);
+    if (bust) bust.note = params[0];
+    return { rows: bust ? [clone(bust)] : [] };
+  }
   if (sql.includes('from busts b join users u') && sql.includes('order by b.timestamp desc')) {
     return { rows: [...state.busts].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)).slice(0, params[0] || 300).map(bustJoined) };
   }

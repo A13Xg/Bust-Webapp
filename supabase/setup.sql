@@ -86,6 +86,8 @@ create policy busts_insert on public.busts for insert to authenticated with chec
       and p.last_bust_timestamp > now() - interval '2 hours'
   )
 );
+drop policy if exists busts_update_note on public.busts;
+create policy busts_update_note on public.busts for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
 
 -- Achievements: crew-readable; you unlock only your own.
 drop policy if exists achievements_select on public.achievements;
@@ -94,7 +96,7 @@ drop policy if exists achievements_insert on public.achievements;
 create policy achievements_insert on public.achievements for insert to authenticated with check (user_id = auth.uid());
 
 -- ---------- Realtime ----------
--- Broadcast bust inserts and profile updates to all clients.
+-- Broadcast bust inserts/updates and profile updates to all clients.
 do $$
 begin
   begin

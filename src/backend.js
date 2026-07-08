@@ -28,6 +28,7 @@ const serverBackend = {
   async deleteAccount() { await rest('/account', { method: 'DELETE' }); localStorage.removeItem('bust_token'); },
   async dashboard() { return rest('/dashboard'); },
   async bust(payload) { return (await rest('/bust', { method: 'POST', body: JSON.stringify(payload) })).bust; },
+  async patchBustNote(id, note) { return (await rest(`/bust/${encodeURIComponent(id)}/note`, { method: 'PATCH', body: JSON.stringify({ note }) })).bust; },
   async saveAchievements(types) { return (await rest('/achievements', { method: 'POST', body: JSON.stringify({ types }) })).achievements; },
   async patchProfile(patch) { return (await rest('/profile', { method: 'PATCH', body: JSON.stringify(patch) })).user; },
   subscribe({ onBust, onProfile }) {
@@ -136,6 +137,14 @@ const staticBackend = {
     if (error) throw new Error(/policy|row-level/i.test(error.message) ? 'Cooldown is still active' : error.message);
     return joinBust(data);
   },
+  async patchBustNote(id, note) {
+    const sb = await getSupa();
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user) throw new Error('Not signed in');
+    const { data, error } = await sb.from('busts').update({ note: String(note || '').slice(0, 240) }).eq('id', id).eq('user_id', user.id).select().single();
+    if (error) throw new Error(error.message);
+    return joinBust(data);
+  },
   async saveAchievements(types) {
     const sb = await getSupa();
     const { data: { user } } = await sb.auth.getUser();
@@ -167,6 +176,10 @@ const staticBackend = {
     getSupa().then(sb => {
       channel = sb.channel('bust-feed')
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'busts' }, async payload => {
+          if (!profileCache.has(payload.new.user_id)) { try { await refreshProfiles(sb); } catch {} }
+          onBust?.(joinBust(payload.new));
+        })
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'busts' }, async payload => {
           if (!profileCache.has(payload.new.user_id)) { try { await refreshProfiles(sb); } catch {} }
           onBust?.(joinBust(payload.new));
         })
