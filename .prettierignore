@@ -1,0 +1,19 @@
+dist/
+node_modules/
+public/
+src/tide-stations.json
+coverage/
+# Existing source files formatted in a follow-up formatting pass
+src/main.jsx
+src/rules.js
+src/expansion.js
+src/rules.test.js
+src/styles.css
+src/audio.js
+src/backend.js
+src/charts.jsx
+server/db.js
+server/index.js
+server/migrate.js
+server/schema.js
+scripts/ci-db-check.mjs

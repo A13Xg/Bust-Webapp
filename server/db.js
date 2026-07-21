@@ -48,6 +48,7 @@ async function memoryQuery(text, params = []) {
   }
 
   if (sql.startsWith('select * from users where id=')) return { rows: state.users.filter(u => u.id === params[0]).map(clone) };
+  if (sql.startsWith('select id from users where id=') && !sql.includes('for update')) return { rows: state.users.filter(u => u.id === params[0]).map(u => ({ id: u.id })) };
   if (sql.startsWith('select * from users where lower(username)=')) return { rows: state.users.filter(u => u.username.toLowerCase() === String(params[0]).toLowerCase()).map(clone) };
   if (sql.startsWith('select id, username, avatar_seed, created_at, last_bust_timestamp, tagline, showcase from users')) {
     return { rows: userPublicSort().map(({ id, username, avatar_seed, created_at, last_bust_timestamp, tagline, showcase }) => ({ id, username, avatar_seed, created_at, last_bust_timestamp, tagline, showcase })) };
@@ -98,6 +99,26 @@ async function memoryQuery(text, params = []) {
     if (!exists) state.achievements.push({ id: randomUUID(), user_id, achievement_type, unlocked_at: new Date().toISOString() });
     return { rows: [] };
   }
+  if (sql.startsWith('select count(*) from users')) {
+    return { rows: [{ count: String(state.users.length) }] };
+  }
+  if (sql.startsWith('select * from busts where user_id=') && sql.includes('order by timestamp asc')) {
+    const rows = state.busts.filter(b => b.user_id === params[0]).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp)).map(clone);
+    return { rows };
+  }
+  if (sql.startsWith('select * from achievements where user_id=')) {
+    const rows = state.achievements.filter(a => a.user_id === params[0]).sort((a, b) => new Date(b.unlocked_at) - new Date(a.unlocked_at)).map(clone);
+    return { rows };
+  }
+  if (sql.startsWith('select id from users where id=') && sql.includes('for update')) {
+    // Atomic cooldown check in memory mode (single-threaded, always safe)
+    const user = state.users.find(u => u.id === params[0]);
+    if (!user) return { rows: [] };
+    if (user.last_bust_timestamp && Date.now() - new Date(user.last_bust_timestamp).getTime() < 2 * 60 * 60 * 1000) {
+      return { rows: [] }; // Cooldown active
+    }
+    return { rows: [{ id: user.id }] };
+  }
   if (sql.startsWith('select * from achievements')) {
     return { rows: [...state.achievements].sort((a, b) => new Date(b.unlocked_at) - new Date(a.unlocked_at)).map(clone) };
   }
@@ -107,4 +128,29 @@ async function memoryQuery(text, params = []) {
 
 export const pool = useMemory ? { query: memoryQuery, end: async () => {} } : new Pool({ connectionString: process.env.DATABASE_URL, ssl: sslConfig(process.env.DATABASE_URL) });
 export async function query(text, params) { return pool.query(text, params); }
+
+/**
+ * Run a callback inside a database transaction.
+ * In memory mode the callback receives an object with a `query` method
+ * (single-threaded, naturally serialised).
+ * In PostgreSQL mode the callback receives a real pg client with BEGIN/COMMIT/ROLLBACK.
+ */
+export async function withTransaction(callback) {
+  if (useMemory) {
+    return callback({ query: memoryQuery });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await callback(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch {}
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 if (useMemory) console.warn('Using in-memory demo database. Set DATABASE_URL and omit DEMO_DB=1 for persistent PostgreSQL.');

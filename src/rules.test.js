@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { achievements, capUnlocksPerBust, progressionCatalog, timeBucket, twoHoursRemainingMs, computeAchievementUnlocks, computeProgressionUnlocks, deriveProgressionSummary, deriveAllTimeRecords, deriveStreaks, levelForXp, derivePersonalStats, buildTrend } from './rules.js';
+import { achievements, capUnlocksPerBust, progressionCatalog, timeBucket, twoHoursRemainingMs, computeAchievementUnlocks, computeProgressionUnlocks, deriveProgressionSummary, deriveAllTimeRecords, deriveStreaks, levelForXp, derivePersonalStats, buildTrend, todayKey } from './rules.js';
 
 describe('BUST rules', () => {
   it('labels time-of-day buckets', () => {
@@ -198,5 +198,203 @@ describe('BUST rules', () => {
     const top = achIds.sort((a, b) => (achievements.find(x => x.id === b).points) - (achievements.find(x => x.id === a).points))[0];
     expect(capped).toContain(top);
     expect(capUnlocksPerBust([])).toEqual([]);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Historical / reconciliation correctness
+  // ──────────────────────────────────────────────────────────────────────────
+  describe('historical achievement reconciliation', () => {
+    function makeBust(userId, overrides = {}) {
+      return { user_id: userId, timestamp: new Date().toISOString(), ...overrides };
+    }
+
+    it('unlocks early_bird from a historical bust, not just the latest', () => {
+      const busts = [
+        makeBust('u1', { timestamp: new Date(2026, 0, 1, 6).toISOString() }), // early morning
+        makeBust('u1', { timestamp: new Date(2026, 0, 2, 22).toISOString() }) // prime night (latest)
+      ];
+      const unlocks = computeAchievementUnlocks('u1', busts, []);
+      expect(unlocks).toContain('early_bird');
+    });
+
+    it('unlocks night_ops from a historical bust, not just the latest', () => {
+      const busts = [
+        makeBust('u1', { timestamp: new Date(2026, 0, 1, 2).toISOString() }), // late night
+        makeBust('u1', { timestamp: new Date(2026, 0, 2, 14).toISOString() }) // afternoon (latest)
+      ];
+      const unlocks = computeAchievementUnlocks('u1', busts, []);
+      expect(unlocks).toContain('night_ops');
+    });
+
+    it('unlocks heat_seeker from a historical hot bust', () => {
+      const busts = [
+        makeBust('u1', { timestamp: new Date(2026, 6, 1, 13).toISOString(), temp_f: 91 }),
+        makeBust('u1', { timestamp: new Date(2026, 6, 2, 13).toISOString(), temp_f: 70 }) // latest is cool
+      ];
+      const unlocks = computeAchievementUnlocks('u1', busts, []);
+      expect(unlocks).toContain('heat_seeker');
+    });
+
+    it('unlocks cold_front from a historical cold bust', () => {
+      const busts = [
+        makeBust('u1', { timestamp: new Date(2026, 0, 1, 9).toISOString(), temp_f: 40 }),
+        makeBust('u1', { timestamp: new Date(2026, 6, 1, 13).toISOString(), temp_f: 80 }) // latest is warm
+      ];
+      const unlocks = computeAchievementUnlocks('u1', busts, []);
+      expect(unlocks).toContain('cold_front');
+    });
+
+    it('unlocks double_shift when 2 busts occurred on a non-latest day', () => {
+      const busts = [
+        // Two busts on Jan 1
+        makeBust('u1', { timestamp: new Date(2026, 0, 1, 10).toISOString() }),
+        makeBust('u1', { timestamp: new Date(2026, 0, 1, 14).toISOString() }),
+        // One bust on Jan 2 (latest)
+        makeBust('u1', { timestamp: new Date(2026, 0, 2, 12).toISOString() })
+      ];
+      const unlocks = computeAchievementUnlocks('u1', busts, []);
+      expect(unlocks).toContain('double_shift');
+    });
+
+    it('unlocks week_warrior from any rolling 7-day window', () => {
+      // 5 busts on consecutive days, none near "now"
+      const base = new Date('2026-01-01T12:00:00Z').getTime();
+      const busts = Array.from({ length: 5 }, (_, i) =>
+        makeBust('u1', { timestamp: new Date(base + i * 86400000).toISOString() })
+      );
+      const unlocks = computeAchievementUnlocks('u1', busts, []);
+      expect(unlocks).toContain('week_warrior');
+    });
+
+    it('does not re-unlock already persisted achievements', () => {
+      const busts = [makeBust('u1', { timestamp: new Date(2026, 0, 1, 6).toISOString() })];
+      const existing = [{ user_id: 'u1', achievement_type: 'first_release' }];
+      const unlocks = computeAchievementUnlocks('u1', busts, existing);
+      expect(unlocks).not.toContain('first_release');
+    });
+
+    it('is idempotent: reconciling twice yields no new unlocks', () => {
+      const busts = Array.from({ length: 5 }, (_, i) =>
+        makeBust('u1', {
+          timestamp: new Date(2026, 6, i + 1, 13).toISOString(),
+          temp_f: 101,
+          pressure: 1025,
+          note: 'heat test repeated note here',
+          lat: 1, long: 2
+        })
+      );
+      const pass1 = computeAchievementUnlocks('u1', busts, []);
+      const existing = pass1.map(id => ({ user_id: 'u1', achievement_type: id }));
+      const pass2 = computeAchievementUnlocks('u1', busts, existing);
+      expect(pass2).toHaveLength(0);
+    });
+
+    it('handles empty bust history gracefully', () => {
+      expect(computeAchievementUnlocks('u1', [], [])).toEqual([]);
+      expect(computeProgressionUnlocks('u1', [], [])).toEqual([]);
+    });
+
+    it('does not unlock achievements for other users busts', () => {
+      const busts = [makeBust('u2', { timestamp: new Date(2026, 0, 1, 6).toISOString() })];
+      const unlocks = computeAchievementUnlocks('u1', busts, []);
+      expect(unlocks).toHaveLength(0);
+    });
+
+    it('can unlock multiple achievements from a single bust', () => {
+      const bust = makeBust('u1', {
+        timestamp: new Date(2026, 0, 1, 6).toISOString(),
+        temp_f: 91,
+        pressure: 1025,
+        note: 'this is a field note that is at least thirty characters long',
+        lat: 1, long: 2
+      });
+      const unlocks = computeAchievementUnlocks('u1', [bust], []);
+      // Should contain at least first_release, early_bird, heat_seeker, high_pressure, field_reporter, cartographer
+      expect(unlocks.length).toBeGreaterThan(3);
+      expect(unlocks).toContain('first_release');
+      expect(unlocks).toContain('early_bird');
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Presentation cap must not affect what was computed
+  // ──────────────────────────────────────────────────────────────────────────
+  it('capUnlocksPerBust limits display but the full computed set is larger', () => {
+    const bust = {
+      user_id: 'u1',
+      timestamp: new Date(2026, 0, 1, 6).toISOString(),
+      temp_f: 91, pressure: 1025,
+      note: 'this is a very detailed long note that is at least thirty chars',
+      lat: 1, long: 2
+    };
+    const allNew = computeAchievementUnlocks('u1', [bust], []);
+    const capped = capUnlocksPerBust(allNew);
+    // Many earned, but cap limits to at most 1 achievement + 1 badge/trophy
+    expect(allNew.length).toBeGreaterThan(capped.length);
+    expect(capped.length).toBeLessThanOrEqual(2);
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Streak progressFor fix
+  // ──────────────────────────────────────────────────────────────────────────
+  describe('streak progression track', () => {
+    it('unlocks double_shift from busts on different local days', () => {
+      // Two busts on day 1, one on day 2 (tests that non-latest day is checked)
+      const busts = [
+        { user_id: 'u1', timestamp: new Date(2026, 0, 1, 10).toISOString() },
+        { user_id: 'u1', timestamp: new Date(2026, 0, 1, 15).toISOString() },
+        { user_id: 'u1', timestamp: new Date(2026, 0, 3, 12).toISOString() }
+      ];
+      const unlocks = computeProgressionUnlocks('u1', busts, []);
+      expect(unlocks).toContain('streak_achievement');
+    });
+
+    it('unlocks week_warrior from 5 busts in any 7-day window', () => {
+      const base = new Date('2026-03-01T12:00:00Z').getTime();
+      const busts = Array.from({ length: 5 }, (_, i) =>
+        ({ user_id: 'u1', timestamp: new Date(base + i * 86400000).toISOString() })
+      );
+      const unlocks = computeProgressionUnlocks('u1', busts, []);
+      expect(unlocks).toContain('streak_badge');
+    });
+
+    it('does not unlock week_warrior from 5 busts spread across 8 days', () => {
+      const base = new Date('2026-03-01T12:00:00Z').getTime();
+      const busts = Array.from({ length: 5 }, (_, i) =>
+        ({ user_id: 'u1', timestamp: new Date(base + i * 2 * 86400000).toISOString() })
+      );
+      // 5 busts but spread over 8 days, no 7-day window has 5
+      const unlocks = computeProgressionUnlocks('u1', busts, []);
+      expect(unlocks).not.toContain('streak_badge');
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Legacy double_shift description parity
+  // ──────────────────────────────────────────────────────────────────────────
+  it('unlocks legacy double_shift only when 2 busts share a local day', () => {
+    // Same local day: qualifies
+    const sameDayBusts = [
+      { user_id: 'u1', timestamp: new Date(2026, 0, 1, 9).toISOString() },
+      { user_id: 'u1', timestamp: new Date(2026, 0, 1, 18).toISOString() }
+    ];
+    expect(computeAchievementUnlocks('u1', sameDayBusts, [])).toContain('double_shift');
+
+    // Different days: does not qualify
+    const diffDayBusts = [
+      { user_id: 'u1', timestamp: new Date(2026, 0, 1, 9).toISOString() },
+      { user_id: 'u1', timestamp: new Date(2026, 0, 2, 9).toISOString() }
+    ];
+    expect(computeAchievementUnlocks('u1', diffDayBusts, [])).not.toContain('double_shift');
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // todayKey consistency
+  // ──────────────────────────────────────────────────────────────────────────
+  it('todayKey returns the same value for same local day regardless of time', () => {
+    const d1 = new Date(2026, 5, 15, 0, 0, 0);
+    const d2 = new Date(2026, 5, 15, 23, 59, 59);
+    expect(todayKey(d1)).toBe(todayKey(d2));
+    expect(todayKey(d1)).toBe('2026-6-15');
   });
 });

@@ -5,7 +5,10 @@
  *   time, talks to Supabase directly (auth, postgrest, realtime) — no Node server.
  *   This is what makes a GitHub Pages deployment work.
  */
-import { timeBucket } from './rules.js';
+import { timeBucket, achievements } from './rules.js';
+
+// Canonical set of valid achievement IDs – used in Supabase mode to block forgery.
+const VALID_ACHIEVEMENT_IDS = new Set(achievements.map(a => a.id));
 
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -42,11 +45,18 @@ const serverBackend = {
       ws.onmessage = e => {
         try {
           const msg = JSON.parse(e.data);
-          if (msg.type === 'bust') onBust?.(msg.bust);
-          if (msg.type === 'profile') onProfile?.(msg.user);
+          // Support both legacy 'bust' and explicit 'bust.created'/'bust.updated' event types.
+          if (msg.type === 'bust' || msg.type === 'bust.created' || msg.type === 'bust.updated') {
+            onBust?.(msg.bust, msg.type === 'bust.updated' ? 'updated' : 'created');
+          }
+          if (msg.type === 'profile' || msg.type === 'profile.updated') onProfile?.(msg.user);
         } catch { /* ignore malformed frames */ }
       };
-      ws.onclose = () => { if (!closed) setTimeout(connect, delay = Math.min(delay * 2, 15000)); };
+      ws.onclose = (event) => {
+        // Code 4001 signals authentication failure – stop reconnecting.
+        if (closed || event.code === 4001) return;
+        setTimeout(connect, delay = Math.min(delay * 2, 15000));
+      };
       ws.onerror = () => { try { ws.close(); } catch {} };
     };
     connect();
@@ -149,8 +159,10 @@ const staticBackend = {
     const sb = await getSupa();
     const { data: { user } } = await sb.auth.getUser();
     if (!user) throw new Error('Not signed in');
-    if (types.length) {
-      const rows = types.slice(0, 60).map(t => ({ user_id: user.id, achievement_type: t }));
+    // Filter to only catalog IDs to prevent arbitrary achievement injection.
+    const validTypes = types.filter(t => VALID_ACHIEVEMENT_IDS.has(t));
+    if (validTypes.length) {
+      const rows = validTypes.slice(0, 60).map(t => ({ user_id: user.id, achievement_type: t }));
       const { error } = await sb.from('achievements').upsert(rows, { onConflict: 'user_id,achievement_type', ignoreDuplicates: true });
       if (error) throw new Error(error.message);
     }
@@ -173,15 +185,17 @@ const staticBackend = {
   },
   subscribe({ onBust, onProfile }) {
     let channel;
+    let unsubscribed = false;
     getSupa().then(sb => {
+      if (unsubscribed) return;
       channel = sb.channel('bust-feed')
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'busts' }, async payload => {
           if (!profileCache.has(payload.new.user_id)) { try { await refreshProfiles(sb); } catch {} }
-          onBust?.(joinBust(payload.new));
+          onBust?.(joinBust(payload.new), 'created');
         })
         .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'busts' }, async payload => {
           if (!profileCache.has(payload.new.user_id)) { try { await refreshProfiles(sb); } catch {} }
-          onBust?.(joinBust(payload.new));
+          onBust?.(joinBust(payload.new), 'updated');
         })
         .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, payload => {
           profileCache.set(payload.new.id, payload.new);
@@ -189,7 +203,7 @@ const staticBackend = {
         })
         .subscribe();
     });
-    return () => { channel?.unsubscribe(); };
+    return () => { unsubscribed = true; channel?.unsubscribe(); };
   }
 };
 

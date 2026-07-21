@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -11,6 +11,8 @@ import { TrendChart, DonutChart, HourHistogram, Sparkline, ScatterChart } from '
 import { backend } from './backend.js';
 import * as sfx from './audio.js';
 import tideStations from './tide-stations.json';
+import { ErrorBoundary } from './ErrorBoundary.jsx';
+import { useAchievementQueue } from './useAchievementQueue.js';
 
 export const asset = p => import.meta.env.BASE_URL + String(p).replace(/^\//, '');
 function avatar(seed) { return `https://api.dicebear.com/9.x/identicon/svg?seed=${encodeURIComponent(seed || 'bust')}&backgroundColor=0a0a0b&rowColor=ff5e00,f5f0e8`; }
@@ -136,7 +138,8 @@ function DeleteAccountModal({onClose,onDeleted}){
   </div>, document.body) }
 
 /** Shown immediately after login when location or notifications aren't granted.
- *  Fires the browser permission prompts on open; SKIP dismisses, OKAY reloads. */
+ *  Location permission is requested on open; notification permission requires an
+ *  explicit button click. SKIP dismisses, OKAY reloads. */
 function PermissionGate(){
   const [show,setShow]=useState(false);
   const [notif,setNotif]=useState(typeof Notification!=='undefined'?Notification.permission:'unsupported');
@@ -152,21 +155,24 @@ function PermissionGate(){
       const alreadyPrompted=sessionStorage.getItem('bust_perm_prompted')==='1';
       if(!alreadyPrompted && (g!=='granted' || (n!=='granted'&&n!=='unsupported'))) setShow(true);
     })(); return()=>{ alive=false; }; },[]);
-  useEffect(()=>{ if(!show) return; // trigger the real browser prompts as soon as the popup appears
-    if(typeof Notification!=='undefined'&&Notification.permission==='default') Notification.requestPermission().then(setNotif).catch(()=>{});
+  useEffect(()=>{ if(!show) return;
+    // Location: request automatically (low-friction, needed for bust context).
     navigator.geolocation?.getCurrentPosition(
       p=>{ localStorage.setItem('bust_geo',JSON.stringify({lat:p.coords.latitude,long:p.coords.longitude,altitude:p.coords.altitude,at:Date.now()})); setGeo('granted'); },
       ()=>setGeo(g=>g==='granted'?g:'denied'),{timeout:20000});
+    // Notification: do NOT auto-request. The user must click the button below.
   },[show]);
+  async function askNotifications(){ if(typeof Notification==='undefined'){ setNotif('unsupported'); return; } try{ setNotif(await Notification.requestPermission()); }catch{ setNotif('denied'); } }
   if(!show) return null;
-  const lbl=v=>({granted:'ENABLED',denied:'BLOCKED',default:'WAITING…',prompt:'WAITING…',checking:'…',unsupported:'N/A'}[v]||v);
+  const lbl=v=>({granted:'ENABLED',denied:'BLOCKED',default:'WAITING…',prompt:'NOT YET',checking:'…',unsupported:'N/A'}[v]||v);
   return createPortal(<div className="ach-detail-back"><div className="picker-box confirm-box mf-frame">
     <h2>Enable Permissions</h2>
-    <p className="showcase-hint">BUST stamps each event with your location + weather and pings you when the crew fires. Allow the browser prompts above, then hit OKAY.</p>
+    <p className="showcase-hint">BUST stamps each event with your location + weather and pings you when the crew fires.</p>
     <div className="perm-status">
       <span className={geo==='granted'?'ok':''}><MapPin/> FIND MY LAIR · {lbl(geo)}</span>
       <span className={notif==='granted'?'ok':''}><Bell/> PING ME, COACH · {lbl(notif)}</span>
     </div>
+    {notif!=='granted'&&notif!=='unsupported'&&<button className="mf-button ghost" onClick={askNotifications} style={{marginBottom:'8px'}}>ENABLE NOTIFICATIONS</button>}
     {(geo==='denied'||notif==='denied')&&<small className="showcase-hint">Blocked? Click the padlock in the address bar to re-enable, then hit OKAY.</small>}
     <div className="picker-actions"><button className="mf-button" onClick={()=>{ sessionStorage.setItem('bust_perm_prompted','1'); location.reload(); }}>OKAY</button></div>
   </div></div>,document.body) }
@@ -179,26 +185,54 @@ function Login({ onAuthed }) {
 
 function App(){ const [user,setUser]=useState(null); const [boot,setBoot]=useState(true); useEffect(()=>{backend.me().then(setUser).catch(()=>{}).finally(()=>setBoot(false))},[]); if(boot) return <div className="boot">UNPACKING BUST BAY…</div>; return user?<Dashboard user={user} setUser={setUser}/>:<Login onAuthed={setUser}/> }
 
-function Dashboard({user,setUser}){ const [busts,setBusts]=useState([]),[users,setUsers]=useState([]),[unlocks,setUnlocks]=useState([]); const [debugBusts,setDebugBusts]=useState([]),[debugUnlocks,setDebugUnlocks]=useState([]),[debugXp,setDebugXp]=useState(0); const [overlay,setOverlay]=useState(null),[selected,setSelected]=useState(null),[phase,setPhase]=useState('idle'),[pendingCtx,setPendingCtx]=useState(null),[toasts,setToasts]=useState([]),[unread,setUnread]=useState(0),[badgeToast,setBadgeToast]=useState(null),[muted,setMuted]=useState(sfx.isMuted()); const bustRef=useRef([]); bustRef.current=busts; const chargeSfx=useRef(null); const [,tick]=useState(0);
+function Dashboard({user,setUser}){ const [busts,setBusts]=useState([]),[users,setUsers]=useState([]),[unlocks,setUnlocks]=useState([]); const [debugBusts,setDebugBusts]=useState([]),[debugUnlocks,setDebugUnlocks]=useState([]),[debugXp,setDebugXp]=useState(0); const [overlay,setOverlay]=useState(null),[selected,setSelected]=useState(null),[phase,setPhase]=useState('idle'),[pendingCtx,setPendingCtx]=useState(null),[toasts,setToasts]=useState([]),[unread,setUnread]=useState(0),[muted,setMuted]=useState(sfx.isMuted()); const bustRef=useRef([]); bustRef.current=busts; const chargeSfx=useRef(null); const [,tick]=useState(0);
+  const { current: badgeToast, enqueue: enqueueBadge, dismiss: dismissBadge } = useAchievementQueue(5200);
   const remaining = twoHoursRemainingMs(user.last_bust_timestamp); const locked = remaining > 0 && phase==='idle';
   useEffect(()=>{ if(remaining>0){ const t=setTimeout(()=>tick(x=>x+1), remaining+300); return()=>clearTimeout(t); } },[remaining]);
-  async function refresh(){ const d=await backend.dashboard(); setBusts(d.busts); setUsers(d.users); setUnlocks(d.achievements); }
+  // Persist all earned achievements (no presentation cap) and return newly saved IDs for display.
+  const persistAndShowUnlocks = useCallback(async (allNew, isRestored=false) => {
+    if (!allNew.length) return;
+    const saved = await backend.saveAchievements(allNew);
+    setUnlocks(saved);
+    const displayItems = capUnlocksPerBust(allNew).map(id => achievements.find(a => a.id === id)).filter(Boolean);
+    if (displayItems.length) {
+      enqueueBadge(displayItems.map(item => ({...item, isRestored})));
+      sfx.play('badge', {volume:.85});
+    }
+  }, [enqueueBadge]);
+  async function refresh(){ const d=await backend.dashboard(); setBusts(d.busts); setUsers(d.users); setUnlocks(d.achievements);
+    // Reconcile historical achievements that may have been missed due to the old presentation cap.
+    try {
+      const allNew=computeAchievementUnlocks(user.id,d.busts,d.achievements,{createdAt:user.created_at,userCount:d.users.length});
+      if(allNew.length) await persistAndShowUnlocks(allNew, true);
+    } catch(e) { console.warn('[reconcile]', e.message); }
+  }
   useEffect(()=>{ refresh().catch(console.error); const unsub=backend.subscribe({
-      onBust: bust=>{ setBusts(prev=>[bust,...prev.filter(b=>b.id!==bust.id)]); setSelected(prev=>prev?.id===bust.id?{...prev,...bust}:prev); setUsers(prev=>prev.map(u=>u.id===bust.user_id?{...u,last_bust_timestamp:bust.timestamp}:u)); if(bust.user_id!==user.id){ setUnread(n=>n+1); setToasts(t=>[{id:crypto.randomUUID(),bust},...t]); if(Notification?.permission==='granted') new Notification(`${bust.username} logged a BUST`, { body: bust.note || 'Pressure event received.' }); } },
+      onBust: (bust, eventType='created')=>{
+        setBusts(prev=>[bust,...prev.filter(b=>b.id!==bust.id)]); setSelected(prev=>prev?.id===bust.id?{...prev,...bust}:prev); setUsers(prev=>prev.map(u=>u.id===bust.user_id?{...u,last_bust_timestamp:bust.timestamp}:u));
+        // Only show toast + increment unread for new busts from OTHER users; not for note edits.
+        if(bust.user_id!==user.id && eventType==='created'){ setUnread(n=>n+1); setToasts(t=>[{id:crypto.randomUUID(),bust},...t]); try{ if(Notification?.permission==='granted') new Notification(`${bust.username} logged a BUST`, { body: bust.note || 'Pressure event received.' }); }catch{} }
+      },
       onProfile: p=>{ setUsers(prev=>prev.map(u=>u.id===p.id?{...u,...p}:u)); }
     }); return unsub; },[]);
   useEffect(()=>{ if(locked&&!muted){ const h=sfx.play('drip',{loop:true,volume:.22}); const t=setTimeout(()=>h.stop(),60000); return()=>{ clearTimeout(t); h.stop(); }; } },[locked,muted]);
   async function collectContext(){ let lat=null,long=null,temp_f=null,pressure=null,city=null,elevation_ft=null,tide_ft=null; try{ const cached=JSON.parse(localStorage.getItem('bust_geo')||'null'); const pos=cached && Date.now()-cached.at<86400000 ? cached : await new Promise((res,rej)=>navigator.geolocation.getCurrentPosition(p=>res({lat:p.coords.latitude,long:p.coords.longitude,altitude:p.coords.altitude,at:Date.now()}),rej,{timeout:6000})); localStorage.setItem('bust_geo',JSON.stringify(pos)); lat=pos.lat; long=pos.long; const w=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${long}&current=temperature_2m,surface_pressure&temperature_unit=fahrenheit`).then(r=>r.json()); temp_f=w.current?.temperature_2m ?? null; pressure=w.current?.surface_pressure ?? null; if(w.elevation!=null&&Number.isFinite(Number(w.elevation))) elevation_ft=Math.round(Number(w.elevation)*3.28084); else if(pos.altitude!=null&&Number.isFinite(Number(pos.altitude))) elevation_ft=Math.round(Number(pos.altitude)*3.28084); try{ const g=await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${long}&localityLanguage=en`).then(r=>r.json()); city=g.city||g.locality||g.principalSubdivision||null; }catch{} try{ tide_ft=await fetchTideFt(lat,long); }catch{} }catch{} return {lat,long,temp_f,pressure,city,elevation_ft,tide_ft}; }
   async function startBust(){ if(locked || phase!=='idle') return; navigator.vibrate?.([35,45,70,65,100]); setPhase('charge'); chargeSfx.current=sfx.play('charge',{loop:true,volume:.75}); const ctx=await collectContext(); setPendingCtx(ctx); setTimeout(()=>{navigator.vibrate?.([180,60,220,80,300]); chargeSfx.current?.stop(); sfx.play('explosion',{volume:.9}); setPhase('explode');},1400); setTimeout(()=>commitBust(ctx),5900); }
-  async function commitBust(ctx=pendingCtx){ try{ const bust=await backend.bust({...ctx,note:''}); const current=[bust,...bustRef.current]; setBusts(prev=>[bust,...prev.filter(b=>b.id!==bust.id)]); const newOnes=capUnlocksPerBust(computeAchievementUnlocks(bust.user_id,current,unlocks,{createdAt:user.created_at,userCount:users.length})); if(newOnes.length){ const saved=await backend.saveAchievements(newOnes); setUnlocks(saved); const featured=achievements.find(a=>a.id===newOnes[0]); setBadgeToast(featured); sfx.play('badge',{volume:.85}); setTimeout(()=>setBadgeToast(null),5200); }
+  async function commitBust(ctx=pendingCtx){ try{ const bust=await backend.bust({...ctx,note:''}); const current=[bust,...bustRef.current]; setBusts(prev=>[bust,...prev.filter(b=>b.id!==bust.id)]);
+      // Compute ALL earned achievements — no presentation cap — then persist.
+      const allNew=computeAchievementUnlocks(bust.user_id,current,unlocks,{createdAt:user.created_at,userCount:users.length});
+      await persistAndShowUnlocks(allNew);
       setUser({...user,last_bust_timestamp:bust.timestamp}); setSelected(bust); }catch(e){ alert(e.message); }
     setPendingCtx(null); setPhase('idle'); }
-  async function saveBustNote(bust,noteText){ const updated=await backend.patchBustNote(bust.id,noteText); const current=[updated,...bustRef.current.filter(b=>b.id!==updated.id)]; setBusts(current); setSelected(prev=>prev?.id===updated.id?{...prev,...updated}:prev); const newOnes=capUnlocksPerBust(computeAchievementUnlocks(updated.user_id,current,unlocks,{createdAt:user.created_at,userCount:users.length})); if(newOnes.length){ const saved=await backend.saveAchievements(newOnes); setUnlocks(saved); const featured=achievements.find(a=>a.id===newOnes[0]); setBadgeToast(featured); sfx.play('badge',{volume:.85}); setTimeout(()=>setBadgeToast(null),5200); } return updated; }
+  async function saveBustNote(bust,noteText){ const updated=await backend.patchBustNote(bust.id,noteText); const current=[updated,...bustRef.current.filter(b=>b.id!==updated.id)]; setBusts(current); setSelected(prev=>prev?.id===updated.id?{...prev,...updated}:prev);
+    const allNew=computeAchievementUnlocks(updated.user_id,current,unlocks,{createdAt:user.created_at,userCount:users.length});
+    await persistAndShowUnlocks(allNew);
+    return updated; }
   const effectiveBusts=useMemo(()=>[...debugBusts,...busts],[debugBusts,busts]);
   const effectiveUnlocks=useMemo(()=>[...debugUnlocks,...unlocks],[debugUnlocks,unlocks]);
-  function addDebugUnlock(id){ const item=achievements.find(a=>a.id===id); if(!item) return; setDebugUnlocks(prev=>prev.some(a=>a.user_id===user.id&&a.achievement_type===id)?prev:[{id:`debug-unlock-${id}-${Date.now()}`,user_id:user.id,achievement_type:id,unlocked_at:new Date().toISOString(),debug:true},...prev]); setBadgeToast(item); sfx.play('badge',{volume:.85}); setTimeout(()=>setBadgeToast(null),5200); }
+  function addDebugUnlock(id){ const item=achievements.find(a=>a.id===id); if(!item) return; setDebugUnlocks(prev=>prev.some(a=>a.user_id===user.id&&a.achievement_type===id)?prev:[{id:`debug-unlock-${id}-${Date.now()}`,user_id:user.id,achievement_type:id,unlocked_at:new Date().toISOString(),debug:true},...prev]); enqueueBadge([item]); sfx.play('badge',{volume:.85}); }
   function addDebugBust(payload){ const when=payload.timestamp?new Date(payload.timestamp):new Date(); const bust={id:`debug-bust-${Date.now()}`,user_id:user.id,username:user.username,avatar_seed:user.avatar_seed,timestamp:when.toISOString(),time_bucket:timeBucket(when),note:String(payload.note||''),temp_f:payload.temp_f===''?null:Number(payload.temp_f),pressure:payload.pressure===''?null:Number(payload.pressure),lat:payload.lat===''?null:Number(payload.lat),long:payload.long===''?null:Number(payload.long),city:payload.city||'Debug Bay',elevation_ft:payload.elevation_ft===''?null:Number(payload.elevation_ft),tide_ft:payload.tide_ft===''?null:Number(payload.tide_ft),debug:true}; const current=[bust,...effectiveBusts]; setDebugBusts(prev=>[bust,...prev]); setSelected(bust); const newOnes=capUnlocksPerBust(computeAchievementUnlocks(user.id,current,effectiveUnlocks,{createdAt:user.created_at,userCount:users.length})); newOnes.forEach(addDebugUnlock); }
-  function clearDebug(){ setDebugBusts([]); setDebugUnlocks([]); setDebugXp(0); setBadgeToast(null); setSelected(prev=>prev?.debug?null:prev); }
+  function clearDebug(){ dismissBadge(); setDebugBusts([]); setDebugUnlocks([]); setDebugXp(0); setSelected(prev=>prev?.debug?null:prev); }
   function resetDebugCooldown(){ setUser(u=>({...u,last_bust_timestamp:null})); setUsers(prev=>prev.map(u=>u.id===user.id?{...u,last_bust_timestamp:null}:u)); setPhase('idle'); }
   SHOWCASE_MAP=Object.fromEntries(users.map(u=>[u.id,validShowcaseIds(u.showcase,earnedIdSet(effectiveUnlocks,u.id))]));
   const analytics=useMemo(()=>buildAnalytics(effectiveBusts,users,user,effectiveUnlocks,debugXp),[effectiveBusts,users,user,effectiveUnlocks,debugXp]);
@@ -215,7 +249,7 @@ const recordEmoji={Crown:'👑',Snowflake:'❄️',Gauge:'📈',AlarmClock:'⏰'
 function RecordIcon({name}){ return <span className="record-emoji" aria-hidden="true">{recordEmoji[name]||'🏆'}</span> }
 function BadgeIcon({name}){ return <MIcon name={matMap[name]||name||'shield'}/> }
 function BadgeMedal({icon,accent,tier}){ const url=tier?tierUrl(tier):null; return <div className={`badge-medal${url?` tier-plated`:''}`} style={{'--badge':accent,...(url?{backgroundImage:`url(${url})`}:{})}}><BadgeIcon name={icon}/></div> }
-function BadgeToast({badge}){ if(!badge) return null; return <motion.div className="badge-toast mf-frame" initial={{opacity:0,y:-22,scale:.92}} animate={{opacity:1,y:0,scale:1}} exit={{opacity:0,y:-22}}><BadgeMedal icon={badge.micon||badge.icon} accent={badge.accent} tier={badge.tier}/><div><span>ACHIEVEMENT UNLOCKED</span><h2>{badge.name}</h2><p>{badge.tier.toUpperCase()} · {badge.points} XP</p></div></motion.div> }
+function BadgeToast({badge}){ if(!badge) return null; return <motion.div className="badge-toast mf-frame" initial={{opacity:0,y:-22,scale:.92}} animate={{opacity:1,y:0,scale:1}} exit={{opacity:0,y:-22}}><BadgeMedal icon={badge.micon||badge.icon} accent={badge.accent} tier={badge.tier}/><div><span>{badge.isRestored?'ACHIEVEMENT RESTORED':'ACHIEVEMENT UNLOCKED'}</span><h2>{badge.name}</h2><p>{badge.tier.toUpperCase()} · {badge.points} XP</p></div></motion.div> }
 function Overlay({title,onClose,children,showScrollTop=false}){ const ref=useRef(null); return <motion.section ref={ref} className="overlay" initial={{y:'100%'}} animate={{y:0}} exit={{y:'100%'}}><button className="close" onClick={onClose}><X/></button><div className="overlay-head"><h1>{title}</h1></div>{children}{showScrollTop&&<button type="button" className="scroll-top" aria-label="Back to top" title="Back to top" onClick={()=>ref.current?.scrollTo({top:0,behavior:'smooth'})}><ChevronUp/></button>}</motion.section> }
 function Detail({bust,all,currentUserId,onSaveNote,onClose,mythicIds}){ const [editing,setEditing]=useState(false); const own=bust.user_id===currentUserId; return <motion.div className="detail-back" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}><div className="detail mf-frame"><button className="detail-close" onClick={onClose} aria-label="Close detail"><X/></button><img src={avatar(bust.avatar_seed)}/><h2><span className={mythicIds?.has(bust.user_id)?'rank-mythic':''}>{bust.username}</span><NameBadges userId={bust.user_id}/></h2><p>{fmt(bust.timestamp)} · {bust.time_bucket}</p>{bust.note?<blockquote>{bust.note}</blockquote>:<p className="detail-empty-note">No field note yet.</p>}{own&&<button type="button" className="mf-button ghost add-note-btn" onClick={()=>setEditing(true)}><Pencil/> Add Note</button>}<div className="metric-grid"><Metric icon={<Thermometer/>} label="TEMP" value={bust.temp_f?`${Math.round(bust.temp_f)}°F`:'—'}/><Metric icon={<Gauge/>} label="PRESSURE" value={pressureLabel(bust.pressure)||'—'} sub={bust.pressure?`${Math.round(bust.pressure)} hPa`:null}/><Metric icon={<Waves/>} label="TIDE" value={tideLabel(bust.tide_ft)}/><Metric icon={<MapPin/>} label="LOCATION" value={bust.city||'Unknown'}/><Metric icon={<Mountain/>} label="ALTITUDE" value={elevationLabel(bust.elevation_ft)}/><Metric icon={<Medal/>} label="DAY RANK" value={`#${rankForDay(bust,all)}`}/></div></div>{editing&&<NoteModal initial={bust.note||''} onClose={()=>setEditing(false)} onSave={note=>onSaveNote(bust,note)}/>}</motion.div> }
 function Metric({icon,label,value,sub}){return <div className="metric">{icon}<small>{label}</small><strong>{value}</strong>{sub&&<em className="metric-sub">{sub}</em>}</div>}
@@ -332,4 +366,4 @@ function buildAnalytics(busts,users,user,unlocks=[],debugXp=0){ const xpFor=id=>
   document.documentElement.classList.add('msym-failed');
   setMsymStatus('failed');
 })();
-createRoot(document.getElementById('root')).render(<App/>);
+createRoot(document.getElementById('root')).render(<ErrorBoundary><App/></ErrorBoundary>);

@@ -5,15 +5,15 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
-import { query } from './db.js';
+import { query, withTransaction } from './db.js';
 import { SCHEMA_SQL } from './schema.js';
+import { computeAchievementUnlocks, achievements } from '../src/rules.js';
 
 const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 const PORT = process.env.PORT || 8787;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
-const COOLDOWN_MS = 2 * 60 * 60 * 1000;
 const NETWORK_CODES = new Set(['ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNRESET']);
 
 app.use(cors());
@@ -66,26 +66,42 @@ app.post('/api/login', async (req, res) => {
 app.get('/api/me', auth, (req, res) => res.json({ user: publicUser(req.user) }));
 app.get('/api/dashboard', auth, async (req, res) => {
   try {
-    const [users, busts, achievements] = await Promise.all([
+    const [users, busts, achievementsResult] = await Promise.all([
       query('select id, username, avatar_seed, created_at, last_bust_timestamp, tagline, showcase from users order by created_at asc'),
       bustRows(),
       query('select * from achievements order by unlocked_at desc')
     ]);
-    res.json({ users: users.rows, busts, achievements: achievements.rows });
+    res.json({ users: users.rows, busts, achievements: achievementsResult.rows });
   } catch (e) { dbErrorResponse(res, e); }
 });
 app.post('/api/bust', auth, async (req, res) => {
   try {
-    const fresh = (await query('select last_bust_timestamp from users where id=$1', [req.user.id])).rows[0];
-    if (fresh?.last_bust_timestamp && Date.now() - new Date(fresh.last_bust_timestamp).getTime() < COOLDOWN_MS) return res.status(429).json({ error: 'Cooldown is still active' });
     const now = new Date();
     const { note = '', temp_f = null, pressure = null, lat = null, long = null, city = null, elevation_ft = null, tide_ft = null } = req.body || {};
-    const { rows } = await query(`insert into busts (user_id, timestamp, note, temp_f, pressure, lat, long, city, elevation_ft, tide_ft, time_bucket) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning *`, [req.user.id, now, String(note).slice(0, 240), temp_f, pressure, lat, long, city, elevation_ft, tide_ft, timeBucket(now)]);
-    await query('update users set last_bust_timestamp=$1 where id=$2', [now, req.user.id]);
-    const full = (await query(`select b.*, u.username, u.avatar_seed from busts b join users u on u.id=b.user_id where b.id=$1`, [rows[0].id])).rows[0];
-    broadcast({ type: 'bust', bust: full });
+    const bustRow = await withTransaction(async (client) => {
+      // Lock the user row and check cooldown atomically.
+      // Two concurrent requests will serialize here; only one will find the row eligible.
+      const { rows: lockRows } = await client.query(
+        `select id from users where id=$1 and (last_bust_timestamp is null or now() - last_bust_timestamp >= interval '2 hours') for update`,
+        [req.user.id]
+      );
+      if (!lockRows[0]) {
+        const err = new Error('Cooldown is still active'); err.code = 'COOLDOWN'; throw err;
+      }
+      const { rows } = await client.query(
+        `insert into busts (user_id, timestamp, note, temp_f, pressure, lat, long, city, elevation_ft, tide_ft, time_bucket) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning *`,
+        [req.user.id, now, String(note).slice(0, 240), temp_f, pressure, lat, long, city, elevation_ft, tide_ft, timeBucket(now)]
+      );
+      await client.query('update users set last_bust_timestamp=$1 where id=$2', [now, req.user.id]);
+      return rows[0];
+    });
+    const full = (await query(`select b.*, u.username, u.avatar_seed from busts b join users u on u.id=b.user_id where b.id=$1`, [bustRow.id])).rows[0];
+    broadcast({ type: 'bust.created', bust: full });
     res.json({ bust: full });
-  } catch (e) { dbErrorResponse(res, e); }
+  } catch (e) {
+    if (e.code === 'COOLDOWN') return res.status(429).json({ error: 'Cooldown is still active' });
+    dbErrorResponse(res, e);
+  }
 });
 app.patch('/api/bust/:id/note', auth, async (req, res) => {
   try {
@@ -93,7 +109,7 @@ app.patch('/api/bust/:id/note', auth, async (req, res) => {
     const { rows } = await query('update busts set note=$1 where id=$2 and user_id=$3 returning *', [note, req.params.id, req.user.id]);
     if (!rows[0]) return res.status(404).json({ error: 'Bust not found' });
     const full = (await query(`select b.*, u.username, u.avatar_seed from busts b join users u on u.id=b.user_id where b.id=$1`, [rows[0].id])).rows[0];
-    broadcast({ type: 'bust', bust: full });
+    broadcast({ type: 'bust.updated', bust: full });
     res.json({ bust: full });
   } catch (e) { dbErrorResponse(res, e); }
 });
@@ -104,21 +120,50 @@ app.patch('/api/profile', auth, async (req, res) => {
     // showcase: up to 3 comma-separated achievement ids pinned beside the username
     const showcase = req.body?.showcase != null ? String(req.body.showcase).split(',').filter(Boolean).slice(0, 3).join(',') : req.user.showcase;
     const { rows } = await query('update users set tagline=$1, avatar_seed=$2, showcase=$3 where id=$4 returning *', [tagline, avatar_seed, showcase, req.user.id]);
-    broadcast({ type: 'profile', user: publicUser(rows[0]) });
+    broadcast({ type: 'profile.updated', user: publicUser(rows[0]) });
     res.json({ user: publicUser(rows[0]) });
   } catch (e) { dbErrorResponse(res, e); }
 });
 app.delete('/api/account', auth, async (req, res) => {
   try {
     await query('delete from users where id=$1', [req.user.id]); // busts/achievements cascade
-    broadcast({ type: 'user_deleted', id: req.user.id });
+    broadcast({ type: 'user.deleted', id: req.user.id });
     res.json({ ok: true });
   } catch (e) { dbErrorResponse(res, e); }
 });
+
+// Build the canonical set of valid achievement IDs once on startup.
+const VALID_ACHIEVEMENT_IDS = new Set(achievements.map(a => a.id));
+
+/**
+ * POST /api/achievements — server-side authoritative achievement reconciliation.
+ *
+ * Computes which achievements the authenticated user has legitimately earned from
+ * their complete bust history, persists any that are missing, and returns the full
+ * list. Client-supplied IDs are accepted only when they appear in the canonical
+ * catalog, so arbitrary forgery is blocked.
+ */
 app.post('/api/achievements', auth, async (req, res) => {
   try {
-    const types = Array.isArray(req.body?.types) ? req.body.types.slice(0, 60) : [];
-    for (const t of types) await query('insert into achievements (user_id, achievement_type) values ($1,$2) on conflict do nothing', [req.user.id, t]);
+    const [allBustsResult, existingResult, userCountResult] = await Promise.all([
+      bustRows(1000),
+      query('select * from achievements', []),
+      query('select count(*) from users', [])
+    ]);
+    const userCount = Number(userCountResult.rows[0].count);
+    const earned = computeAchievementUnlocks(
+      req.user.id,
+      allBustsResult,
+      existingResult.rows,
+      { createdAt: req.user.created_at, userCount }
+    );
+    // Accept client-submitted IDs only if they exist in the canonical catalog
+    const clientTypes = Array.isArray(req.body?.types) ? req.body.types : [];
+    const validClientTypes = clientTypes.filter(t => VALID_ACHIEVEMENT_IDS.has(t));
+    const toSave = [...new Set([...earned, ...validClientTypes])];
+    for (const t of toSave) {
+      await query('insert into achievements (user_id, achievement_type) values ($1,$2) on conflict do nothing', [req.user.id, t]);
+    }
     const { rows } = await query('select * from achievements order by unlocked_at desc');
     res.json({ achievements: rows });
   } catch (e) { dbErrorResponse(res, e); }

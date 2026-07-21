@@ -103,9 +103,6 @@ export function twoHoursRemainingMs(lastTimestamp, now = Date.now()) {
 }
 
 function progressFor(trackId, own) {
-  const latest = own[own.length - 1];
-  const latestDate = latest ? todayKey(latest.timestamp) : null;
-  const weekAgo = latest ? new Date(latest.timestamp).getTime() - 7*24*60*60*1000 : 0;
   const countWhere = (fn) => own.filter(fn).length;
   const unique = (fn) => new Set(own.map(fn).filter(Boolean)).size;
   switch (trackId) {
@@ -117,7 +114,24 @@ function progressFor(trackId, own) {
     case 'cold': return countWhere(b => Number(b.temp_f) < 45);
     case 'scribe': return countWhere(b => (b.note || '').trim().length >= 30);
     case 'cartographer': return countWhere(b => b.lat != null && b.long != null);
-    case 'streak': return Math.max(countWhere(b => latestDate && todayKey(b.timestamp) === latestDate), countWhere(b => new Date(b.timestamp).getTime() >= weekAgo));
+    case 'streak': {
+      // Max busts on any single local day (for Double Shift, goal=2)
+      const dayCounts = {};
+      own.forEach(b => { const k = todayKey(b.timestamp); dayCounts[k] = (dayCounts[k] || 0) + 1; });
+      const maxDay = Math.max(0, ...Object.values(dayCounts));
+      // Max busts in any rolling 7-day window (for Week Warrior goal=5, Seven-Day Storm goal=10)
+      let maxWindow = 0;
+      const MS_WEEK = 7 * 24 * 60 * 60 * 1000;
+      for (let i = 0; i < own.length; i++) {
+        const windowStart = new Date(own[i].timestamp).getTime();
+        const inWindow = own.filter(b => {
+          const t = new Date(b.timestamp).getTime();
+          return t >= windowStart && t < windowStart + MS_WEEK;
+        }).length;
+        maxWindow = Math.max(maxWindow, inWindow);
+      }
+      return Math.max(maxDay, maxWindow);
+    }
     case 'night': return countWhere(b => timeBucket(b.timestamp) === 'Late Night');
     default: return 0;
   }
@@ -139,24 +153,40 @@ export function computeProgressionUnlocks(userId, busts, existing = []) {
 
 export function computeAchievementUnlocks(userId, busts, existing = [], opts = {}) {
   const own = busts.filter(b => b.user_id === userId).sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
-  const latest = own[own.length - 1];
-  if (!latest) return [];
+  if (!own.length) return [];
   const already = alreadyUnlocked(existing, userId);
   const add = (id, condition) => condition && !already.has(id) ? id : null;
-  const latestDate = todayKey(latest.timestamp);
-  const weekAgo = new Date(latest.timestamp).getTime() - 7*24*60*60*1000;
+  // Max busts on any single local day (for double_shift)
+  const dayCounts = {};
+  own.forEach(b => { const k = todayKey(b.timestamp); dayCounts[k] = (dayCounts[k] || 0) + 1; });
+  const maxDay = Math.max(0, ...Object.values(dayCounts));
+  // Max busts in any rolling 7-day window (for week_warrior)
+  const MS_WEEK = 7 * 24 * 60 * 60 * 1000;
+  let maxWeek = 0;
+  for (let i = 0; i < own.length; i++) {
+    const windowStart = new Date(own[i].timestamp).getTime();
+    const inWindow = own.filter(b => {
+      const t = new Date(b.timestamp).getTime();
+      return t >= windowStart && t < windowStart + MS_WEEK;
+    }).length;
+    maxWeek = Math.max(maxWeek, inWindow);
+  }
   const legacy = [
     add('first_release', own.length >= 1),
-    add('double_shift', own.filter(b => todayKey(b.timestamp) === latestDate).length >= 2),
-    add('night_ops', ['Late Night'].includes(timeBucket(latest.timestamp))),
-    add('early_bird', ['Early Morning'].includes(timeBucket(latest.timestamp))),
-    add('heat_seeker', Number(latest.temp_f) > 85),
-    add('cold_front', Number(latest.temp_f) < 45),
-    add('high_pressure', Number(latest.pressure) > 1020),
-    add('field_reporter', (latest.note || '').trim().length >= 30),
+    // Checks any local day, not just the latest
+    add('double_shift', maxDay >= 2),
+    // Checks any bust at night, not just the latest
+    add('night_ops', own.some(b => timeBucket(b.timestamp) === 'Late Night')),
+    add('early_bird', own.some(b => timeBucket(b.timestamp) === 'Early Morning')),
+    // Checks any bust with the condition, not just the latest
+    add('heat_seeker', own.some(b => Number(b.temp_f) > 85)),
+    add('cold_front', own.some(b => Number(b.temp_f) < 45)),
+    add('high_pressure', own.some(b => Number(b.pressure) > 1020)),
+    add('field_reporter', own.some(b => (b.note || '').trim().length >= 30)),
     add('hat_trick', own.length >= 3),
-    add('week_warrior', own.filter(b => new Date(b.timestamp).getTime() >= weekAgo).length >= 5),
-    add('cartographer', latest.lat != null && latest.long != null)
+    // Checks any rolling 7-day window, not just the 7 days before the latest bust
+    add('week_warrior', maxWeek >= 5),
+    add('cartographer', own.some(b => b.lat != null && b.long != null))
   ].filter(Boolean);
   return [...legacy, ...computeProgressionUnlocks(userId, busts, existing), ...computeExpansionUnlocks(userId, busts, existing, opts)].filter((id, index, all) => all.indexOf(id) === index);
 }

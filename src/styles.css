@@ -319,3 +319,8 @@ img,svg,canvas{max-width:100%}
 .record-card span{margin-top:0;color:var(--muted);font:900 11px Tahoma,sans-serif;letter-spacing:2px;text-transform:uppercase}
 .record-card strong{margin-top:0;font-size:30px;line-height:1;font-weight:900}
 .record-card p{margin:0;color:var(--muted);font-weight:700}
+
+/* Error boundary fallback */
+.error-boundary{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;text-align:center}
+.error-boundary h2{font-size:clamp(18px,4vw,28px);font-weight:900}
+.error-boundary p{color:var(--muted);max-width:480px}
