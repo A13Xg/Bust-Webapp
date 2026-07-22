@@ -12,6 +12,7 @@ import { backend } from './backend.js';
 import * as sfx from './audio.js';
 import tideStations from './tide-stations.json';
 import { ErrorBoundary } from './ErrorBoundary.jsx';
+import { getNotificationPermission, requestNotificationPermission, sendBrowserNotification } from './notifications.js';
 import { useAchievementQueue } from './useAchievementQueue.js';
 
 export const asset = p => import.meta.env.BASE_URL + String(p).replace(/^\//, '');
@@ -142,14 +143,15 @@ function DeleteAccountModal({onClose,onDeleted}){
  *  explicit button click. SKIP dismisses, OKAY reloads. */
 function PermissionGate(){
   const [show,setShow]=useState(false);
-  const [notif,setNotif]=useState(typeof Notification!=='undefined'?Notification.permission:'unsupported');
+  const [notif,setNotif]=useState(getNotificationPermission());
   const [geo,setGeo]=useState('checking');
   useEffect(()=>{ let alive=true; (async()=>{
       let g='prompt';
       try{ const r=await navigator.permissions.query({name:'geolocation'}); g=r.state; r.onchange=()=>{ if(alive) setGeo(r.state); }; }catch{}
+  const n=getNotificationPermission();
       if(!alive) return;
       setGeo(g);
-      const n=typeof Notification!=='undefined'?Notification.permission:'unsupported';
+      setNotif(n);
       // sessionStorage flag guarantees the gate appears at most once per session,
       // so OKAY's reload can never re-trigger it in a loop.
       const alreadyPrompted=sessionStorage.getItem('bust_perm_prompted')==='1';
@@ -160,9 +162,8 @@ function PermissionGate(){
     navigator.geolocation?.getCurrentPosition(
       p=>{ localStorage.setItem('bust_geo',JSON.stringify({lat:p.coords.latitude,long:p.coords.longitude,altitude:p.coords.altitude,at:Date.now()})); setGeo('granted'); },
       ()=>setGeo(g=>g==='granted'?g:'denied'),{timeout:20000});
-    // Notification: do NOT auto-request. The user must click the button below.
   },[show]);
-  async function askNotifications(){ if(typeof Notification==='undefined'){ setNotif('unsupported'); return; } try{ setNotif(await Notification.requestPermission()); }catch{ setNotif('denied'); } }
+  async function askNotifications(){ setNotif(await requestNotificationPermission()); }
   if(!show) return null;
   const lbl=v=>({granted:'ENABLED',denied:'BLOCKED',default:'WAITING…',prompt:'NOT YET',checking:'…',unsupported:'N/A'}[v]||v);
   return createPortal(<div className="ach-detail-back"><div className="picker-box confirm-box mf-frame">
@@ -211,7 +212,7 @@ function Dashboard({user,setUser}){ const [busts,setBusts]=useState([]),[users,s
       onBust: (bust, eventType='created')=>{
         setBusts(prev=>[bust,...prev.filter(b=>b.id!==bust.id)]); setSelected(prev=>prev?.id===bust.id?{...prev,...bust}:prev); setUsers(prev=>prev.map(u=>u.id===bust.user_id?{...u,last_bust_timestamp:bust.timestamp}:u));
         // Only show toast + increment unread for new busts from OTHER users; not for note edits.
-        if(bust.user_id!==user.id && eventType==='created'){ setUnread(n=>n+1); setToasts(t=>[{id:crypto.randomUUID(),bust},...t]); try{ if(Notification?.permission==='granted') new Notification(`${bust.username} logged a BUST`, { body: bust.note || 'Pressure event received.' }); }catch{} }
+        if(bust.user_id!==user.id && eventType==='created'){ setUnread(n=>n+1); setToasts(t=>[{id:crypto.randomUUID(),bust},...t]); void sendBrowserNotification(`${bust.username} logged a BUST`, { body: bust.note || 'Pressure event received.' }); }
       },
       onProfile: p=>{ setUsers(prev=>prev.map(u=>u.id===p.id?{...u,...p}:u)); }
     }); return unsub; },[]);
@@ -255,10 +256,16 @@ function Detail({bust,all,currentUserId,onSaveNote,onClose,mythicIds}){ const [e
 function Metric({icon,label,value,sub}){return <div className="metric">{icon}<small>{label}</small><strong>{value}</strong>{sub&&<em className="metric-sub">{sub}</em>}</div>}
 /** Location + notification permission re-request controls (profile). Browsers only re-prompt when state is 'prompt'; DENIED requires the browser's site settings. */
 function PermissionControls(){
-  const [notif,setNotif]=useState(typeof Notification!=='undefined'?Notification.permission:'unsupported');
+  const [notif,setNotif]=useState(getNotificationPermission());
   const [geo,setGeo]=useState('unknown');
-  useEffect(()=>{ navigator.permissions?.query({name:'geolocation'}).then(r=>{ setGeo(r.state); r.onchange=()=>setGeo(r.state); }).catch(()=>{}); },[]);
-  async function askNotif(){ if(typeof Notification==='undefined'){ setNotif('unsupported'); return; } try{ setNotif(await Notification.requestPermission()); }catch{ setNotif('denied'); } }
+  useEffect(()=>{
+    navigator.permissions?.query({name:'geolocation'}).then(r=>{ setGeo(r.state); r.onchange=()=>setGeo(r.state); }).catch(()=>{});
+    const syncNotif=()=>setNotif(getNotificationPermission());
+    syncNotif();
+    window.addEventListener('focus', syncNotif);
+    return ()=>window.removeEventListener('focus', syncNotif);
+  },[]);
+  async function askNotif(){ setNotif(await requestNotificationPermission()); }
   function askGeo(){ if(!navigator.geolocation){ setGeo('unsupported'); return; } localStorage.removeItem('bust_geo'); navigator.geolocation.getCurrentPosition(
     p=>{ localStorage.setItem('bust_geo',JSON.stringify({lat:p.coords.latitude,long:p.coords.longitude,altitude:p.coords.altitude,at:Date.now()})); setGeo('granted'); },
     ()=>setGeo('denied'),{timeout:8000}); }
