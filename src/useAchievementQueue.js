@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 /**
  * Filters `items` to those whose `id` is not already in `seenSet`, adding each
- * accepted id to `seenSet` as a side effect.  Pure function — safe to call from
- * anywhere that has access to the session-level seen-set.
+ * accepted id to `seenSet` as a side effect. Deterministic helper; not a pure
+ * function because it mutates `seenSet`.
  */
 export function dedupeItems(items, seenSet) {
   const out = [];
