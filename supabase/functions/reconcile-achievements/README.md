@@ -2,7 +2,9 @@
 
 This function is the authoritative achievement evaluator for static Supabase deployments.
 
-It authenticates the caller with the supplied user JWT, reads complete paginated history with the service-role client, imports the same `computeAchievementUnlocks` implementation used by the Express server, persists only server-computed IDs, and returns the complete achievement collection.
+It authenticates the caller with the supplied user JWT, reads complete paginated history with the service-role client, imports the same `computeAchievementUnlocks` implementation and achievement catalog used by the Express server, persists only server-computed catalog IDs, and returns the complete achievement collection.
+
+This provides parity for legacy, progression, expansion, social, and meta achievements without duplicating rule logic in SQL.
 
 ## Deploy
 
@@ -30,6 +32,6 @@ Do not expose `SUPABASE_SERVICE_ROLE_KEY` to the browser or add it to any `VITE_
 
 ## Deployment dependency
 
-The function imports `../../../src/rules.js`. Deploy it from the repository root so the Supabase bundler can resolve the canonical rules module. A deployment should fail rather than silently fall back to the older partial SQL reconciler if that import cannot be bundled.
+The function imports `../../../src/rules.js` and `../../../src/fetchAllPages.js`. Deploy it from the repository root so the Supabase bundler can resolve the canonical modules. A deployment should fail rather than silently fall back to the older partial SQL reconciler if those imports cannot be bundled.
 
 JWT verification is explicitly enabled in `supabase/config.toml`.
