@@ -1,8 +1,12 @@
 export const DEFAULT_PAGE_SIZE = 1000;
 
 export async function fetchAllPages(queryPage, pageSize = DEFAULT_PAGE_SIZE) {
-  if (typeof queryPage !== 'function') throw new TypeError('queryPage must be a function');
-  if (!Number.isInteger(pageSize) || pageSize < 1) throw new RangeError('pageSize must be a positive integer');
+  if (typeof queryPage !== 'function') {
+    throw new TypeError('queryPage must be a function');
+  }
+  if (!Number.isInteger(pageSize) || pageSize < 1) {
+    throw new RangeError('pageSize must be a positive integer');
+  }
 
   const rows = [];
   for (let from = 0; ; from += pageSize) {
