@@ -31,3 +31,5 @@ Do not expose `SUPABASE_SERVICE_ROLE_KEY` to the browser or add it to any `VITE_
 ## Deployment dependency
 
 The function imports `../../../src/rules.js`. Deploy it from the repository root so the Supabase bundler can resolve the canonical rules module. A deployment should fail rather than silently fall back to the older partial SQL reconciler if that import cannot be bundled.
+
+JWT verification is explicitly enabled in `supabase/config.toml`.
