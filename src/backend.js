@@ -32,11 +32,9 @@ const serverBackend = {
   async patchBustNote(id, note) { return (await rest(`/bust/${encodeURIComponent(id)}/note`, { method: 'PATCH', body: JSON.stringify({ note }) })).bust; },
   async recentBusts(limit = 60) { return (await rest(`/busts/recent?limit=${encodeURIComponent(limit)}`)).busts; },
   async reconcileAchievements() { return await rest('/achievements/reconcile', { method: 'POST' }); },
-  // Legacy name retained for call-site compatibility; server path is authoritative reconcile.
   async saveAchievements() { return (await this.reconcileAchievements()).achievements; },
   async patchProfile(patch) { return (await rest('/profile', { method: 'PATCH', body: JSON.stringify(patch) })).user; },
   subscribe({ onBust, onProfile, onStatus }) {
-    // Auto-reconnecting WebSocket with exponential backoff + jitter (1s → 15s cap).
     let ws = null, closed = false, delay = 1000, reconnectTimer = null;
     const clearReconnect = () => {
       if (reconnectTimer) {
@@ -59,16 +57,14 @@ const serverBackend = {
       ws.onmessage = e => {
         try {
           const msg = JSON.parse(e.data);
-          // Support both legacy 'bust' and explicit 'bust.created'/'bust.updated' event types.
           if (msg.type === 'bust' || msg.type === 'bust.created' || msg.type === 'bust.updated') {
             onBust?.(msg.bust, msg.type === 'bust.updated' ? 'updated' : 'created');
           }
           if (msg.type === 'profile' || msg.type === 'profile.updated') onProfile?.(msg.user);
         } catch { /* ignore malformed frames */ }
       };
-      ws.onclose = (event) => {
+      ws.onclose = event => {
         ws = null;
-        // Code 4001 signals authentication failure – stop reconnecting.
         if (closed || event.code === 4001) { onStatus?.('CLOSED'); return; }
         onStatus?.('TIMED_OUT');
         scheduleReconnect();
@@ -133,8 +129,6 @@ const staticBackend = {
   },
   async logout() { const sb = await getSupa(); await sb.auth.signOut(); },
   async deleteAccount() {
-    // Anon key can't remove the auth.users row (needs service role) — deleting the
-    // profile cascades busts/achievements and frees the username, then we sign out.
     const sb = await getSupa();
     const { data: { user } } = await sb.auth.getUser();
     if (!user) throw new Error('Not signed in');
@@ -167,7 +161,7 @@ const staticBackend = {
     const now = new Date();
     const row = { user_id: user.id, timestamp: now.toISOString(), note: String(payload.note || '').slice(0, 240), temp_f: payload.temp_f, pressure: payload.pressure, lat: payload.lat, long: payload.long, city: payload.city, elevation_ft: payload.elevation_ft, tide_ft: payload.tide_ft, time_bucket: timeBucket(now) };
     const { data, error } = await sb.from('busts').insert(row).select().single();
-    if (error) throw new Error(/policy|row-level/i.test(error.message) ? 'Cooldown is still active' : error.message);
+    if (error) throw new Error(/policy|row-level|cooldown/i.test(error.message) ? 'Cooldown is still active' : error.message);
     return joinBust(data);
   },
   async patchBustNote(id, note) {
@@ -182,11 +176,11 @@ const staticBackend = {
     const sb = await getSupa();
     const { data: { user } } = await sb.auth.getUser();
     if (!user) throw new Error('Not signed in');
-    const rpc = await sb.rpc('reconcile_achievements');
-    if (rpc.error) throw new Error(rpc.error.message);
-    const { data, error } = await sb.from('achievements').select('*').order('unlocked_at', { ascending: false });
-    if (error) throw new Error(error.message);
-    return { achievements: data };
+    const { data, error } = await sb.functions.invoke('reconcile-achievements', { body: {} });
+    if (error) throw new Error(error.message || 'Achievement reconciliation failed');
+    if (data?.error) throw new Error(data.error);
+    if (!Array.isArray(data?.achievements)) throw new Error('Achievement reconciliation returned an invalid response');
+    return { achievements: data.achievements };
   },
   async saveAchievements() { return (await this.reconcileAchievements()).achievements; },
   async patchProfile(patch) {
