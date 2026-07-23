@@ -1,73 +1,115 @@
 /**
  * Tests for the achievement notification queue logic.
- * Tests the deduplication and queue advancement semantics without
- * requiring a full React testing environment.
+ * Covers both the pure deduplication helper (dedupeItems) and the
+ * real useAchievementQueue hook via renderHook.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { renderHook, act } from '@testing-library/react';
+import { dedupeItems, useAchievementQueue } from './useAchievementQueue.js';
 
-// Test the core deduplication logic extracted from useAchievementQueue.
-function makeQueue(items = []) {
-  const shown = new Set(items);
-  return {
-    shown,
-    enqueue(newItems) {
-      return newItems.filter(item => {
-        if (shown.has(item.id)) return false;
-        shown.add(item.id);
-        return true;
-      });
-    },
-  };
-}
+// ---------- dedupeItems (pure function) ----------
 
-describe('achievement queue deduplication', () => {
-  it('allows new achievement IDs through', () => {
-    const q = makeQueue();
-    const items = [{ id: 'first_release' }, { id: 'hat_trick' }];
-    expect(q.enqueue(items)).toHaveLength(2);
+describe('dedupeItems', () => {
+  it('passes through all items when the set is empty', () => {
+    const seen = new Set();
+    expect(dedupeItems([{ id: 'a' }, { id: 'b' }], seen)).toHaveLength(2);
   });
 
-  it('blocks already-shown achievement IDs', () => {
-    const q = makeQueue(['first_release']);
-    expect(q.enqueue([{ id: 'first_release' }])).toHaveLength(0);
+  it('blocks IDs already in the set', () => {
+    const seen = new Set(['a']);
+    expect(dedupeItems([{ id: 'a' }], seen)).toHaveLength(0);
   });
 
   it('deduplicates within a single batch', () => {
-    const q = makeQueue();
-    const items = [{ id: 'a1' }, { id: 'a1' }];
-    const fresh = q.enqueue(items);
-    expect(fresh).toHaveLength(1);
-    expect(fresh[0].id).toBe('a1');
+    const seen = new Set();
+    const result = dedupeItems([{ id: 'a' }, { id: 'a' }], seen);
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('a');
   });
 
-  it('blocks duplicates across calls', () => {
-    const q = makeQueue();
-    q.enqueue([{ id: 'a1' }]);
-    const second = q.enqueue([{ id: 'a1' }]);
-    expect(second).toHaveLength(0);
+  it('blocks duplicates across successive calls', () => {
+    const seen = new Set();
+    dedupeItems([{ id: 'a' }], seen);
+    expect(dedupeItems([{ id: 'a' }], seen)).toHaveLength(0);
   });
 
-  it('does not block different IDs', () => {
-    const q = makeQueue(['a1']);
-    const fresh = q.enqueue([{ id: 'a1' }, { id: 'a2' }]);
-    expect(fresh).toHaveLength(1);
-    expect(fresh[0].id).toBe('a2');
+  it('lets different IDs through after partial dedupe', () => {
+    const seen = new Set(['a']);
+    const result = dedupeItems([{ id: 'a' }, { id: 'b' }], seen);
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('b');
+  });
+
+  it('adds accepted IDs to the set', () => {
+    const seen = new Set();
+    dedupeItems([{ id: 'x' }], seen);
+    expect(seen.has('x')).toBe(true);
   });
 });
 
-describe('achievement queue ordering and sequential display', () => {
-  it('processes items in FIFO order', () => {
-    const order = [];
-    const queue = ['first_release', 'hat_trick', 'week_warrior'];
-    queue.forEach(id => order.push(id));
-    expect(order[0]).toBe('first_release');
-    expect(order[2]).toBe('week_warrior');
+// ---------- useAchievementQueue (real hook) ----------
+
+describe('useAchievementQueue', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('starts with no current item', () => {
+    const { result } = renderHook(() => useAchievementQueue(500));
+    expect(result.current.current).toBeNull();
   });
 
-  it('isRestored flag distinguishes restored vs newly earned achievements', () => {
-    const restored = { id: 'first_release', isRestored: true };
-    const fresh = { id: 'hat_trick', isRestored: false };
-    expect(restored.isRestored).toBe(true);
-    expect(fresh.isRestored).toBe(false);
+  it('promotes the first enqueued item to current immediately', () => {
+    const { result } = renderHook(() => useAchievementQueue(500));
+    act(() => { result.current.enqueue({ id: 'first_release', name: 'First Release' }); });
+    expect(result.current.current?.id).toBe('first_release');
+  });
+
+  it('does not replace an already-showing item when more are enqueued', () => {
+    const { result } = renderHook(() => useAchievementQueue(500));
+    act(() => { result.current.enqueue({ id: 'a', name: 'A' }); });
+    act(() => { result.current.enqueue({ id: 'b', name: 'B' }); });
+    expect(result.current.current?.id).toBe('a');
+  });
+
+  it('advances to the next item after dismiss', () => {
+    const { result } = renderHook(() => useAchievementQueue(500));
+    act(() => { result.current.enqueue([{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }]); });
+    expect(result.current.current?.id).toBe('a');
+    act(() => { result.current.dismiss(); });
+    expect(result.current.current?.id).toBe('b');
+  });
+
+  it('clears current after the last item is dismissed', () => {
+    const { result } = renderHook(() => useAchievementQueue(500));
+    act(() => { result.current.enqueue({ id: 'a', name: 'A' }); });
+    act(() => { result.current.dismiss(); });
+    expect(result.current.current).toBeNull();
+  });
+
+  it('auto-advances after durationMs', () => {
+    const { result } = renderHook(() => useAchievementQueue(500));
+    act(() => { result.current.enqueue([{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }]); });
+    expect(result.current.current?.id).toBe('a');
+    act(() => { vi.advanceTimersByTime(500); });
+    expect(result.current.current?.id).toBe('b');
+  });
+
+  it('deduplicates repeated IDs across enqueue calls', () => {
+    const { result } = renderHook(() => useAchievementQueue(500));
+    act(() => { result.current.enqueue({ id: 'a', name: 'A' }); });
+    act(() => { result.current.dismiss(); });
+    // Re-enqueuing the same ID should be ignored.
+    act(() => { result.current.enqueue({ id: 'a', name: 'A' }); });
+    expect(result.current.current).toBeNull();
+  });
+
+  it('preserves FIFO order across a batch of items', () => {
+    const { result } = renderHook(() => useAchievementQueue(500));
+    act(() => { result.current.enqueue([{ id: '1' }, { id: '2' }, { id: '3' }]); });
+    expect(result.current.current?.id).toBe('1');
+    act(() => { result.current.dismiss(); });
+    expect(result.current.current?.id).toBe('2');
+    act(() => { result.current.dismiss(); });
+    expect(result.current.current?.id).toBe('3');
   });
 });

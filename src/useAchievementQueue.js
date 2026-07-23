@@ -1,6 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 /**
+ * Filters `items` to those whose `id` is not already in `seenSet`, adding each
+ * accepted id to `seenSet` as a side effect.  Pure function — safe to call from
+ * anywhere that has access to the session-level seen-set.
+ */
+export function dedupeItems(items, seenSet) {
+  const out = [];
+  for (const item of items) {
+    if (!seenSet.has(item.id)) {
+      seenSet.add(item.id);
+      out.push(item);
+    }
+  }
+  return out;
+}
+
+/**
  * useAchievementQueue — sequential achievement toast display.
  *
  * Rules:
@@ -45,21 +61,24 @@ export function useAchievementQueue(durationMs = 5200) {
    * Enqueue one or more achievement item objects.
    * Pass `{ isRestored: true }` to mark an item as historically backfilled so
    * the UI can style or label it differently.
+   *
+   * Uses a single `setCurrent` updater to atomically decide whether to promote
+   * the first fresh item to `current` (nothing showing) or append all items to
+   * the queue (something already showing), avoiding React-batching race conditions.
    */
   const enqueue = useCallback(items => {
     const arr = Array.isArray(items) ? items : [items];
-    const fresh = arr.filter(item => !shownIds.current.has(item.id));
-    fresh.forEach(item => shownIds.current.add(item.id));
+    const fresh = dedupeItems(arr, shownIds.current);
     if (!fresh.length) return;
-    setQueue(prev => {
-      const next = [...prev, ...fresh];
-      return next;
-    });
-    // If nothing is currently showing, trigger immediately.
     setCurrent(prev => {
-      if (prev) return prev;
+      if (prev) {
+        // Something is already showing — append all fresh items to the queue.
+        setQueue(q => [...q, ...fresh]);
+        return prev;
+      }
+      // Nothing is showing — show the head immediately and queue the rest.
       const [head, ...tail] = fresh;
-      setQueue(q => [...q.slice(fresh.length - tail.length), ...tail]);
+      if (tail.length) setQueue(q => [...q, ...tail]);
       return head;
     });
   }, []);

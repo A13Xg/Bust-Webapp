@@ -119,16 +119,14 @@ function progressFor(trackId, own) {
       const dayCounts = {};
       own.forEach(b => { const k = todayKey(b.timestamp); dayCounts[k] = (dayCounts[k] || 0) + 1; });
       const maxDay = Math.max(0, ...Object.values(dayCounts));
-      // Max busts in any rolling 7-day window (for Week Warrior goal=5, Seven-Day Storm goal=10)
+      // Max busts in any rolling 7-day window — O(n) two-pointer sliding window.
       let maxWindow = 0;
       const MS_WEEK = 7 * 24 * 60 * 60 * 1000;
-      for (let i = 0; i < own.length; i++) {
-        const windowStart = new Date(own[i].timestamp).getTime();
-        const inWindow = own.filter(b => {
-          const t = new Date(b.timestamp).getTime();
-          return t >= windowStart && t < windowStart + MS_WEEK;
-        }).length;
-        maxWindow = Math.max(maxWindow, inWindow);
+      const timestamps = own.map(b => new Date(b.timestamp).getTime());
+      let left = 0;
+      for (let right = 0; right < timestamps.length; right++) {
+        while (timestamps[right] - timestamps[left] >= MS_WEEK) left++;
+        maxWindow = Math.max(maxWindow, right - left + 1);
       }
       return Math.max(maxDay, maxWindow);
     }
@@ -160,16 +158,14 @@ export function computeAchievementUnlocks(userId, busts, existing = [], opts = {
   const dayCounts = {};
   own.forEach(b => { const k = todayKey(b.timestamp); dayCounts[k] = (dayCounts[k] || 0) + 1; });
   const maxDay = Math.max(0, ...Object.values(dayCounts));
-  // Max busts in any rolling 7-day window (for week_warrior)
+  // Max busts in any rolling 7-day window — O(n) two-pointer sliding window.
   const MS_WEEK = 7 * 24 * 60 * 60 * 1000;
   let maxWeek = 0;
-  for (let i = 0; i < own.length; i++) {
-    const windowStart = new Date(own[i].timestamp).getTime();
-    const inWindow = own.filter(b => {
-      const t = new Date(b.timestamp).getTime();
-      return t >= windowStart && t < windowStart + MS_WEEK;
-    }).length;
-    maxWeek = Math.max(maxWeek, inWindow);
+  const ownTs = own.map(b => new Date(b.timestamp).getTime());
+  let left = 0;
+  for (let right = 0; right < ownTs.length; right++) {
+    while (ownTs[right] - ownTs[left] >= MS_WEEK) left++;
+    maxWeek = Math.max(maxWeek, right - left + 1);
   }
   const legacy = [
     add('first_release', own.length >= 1),

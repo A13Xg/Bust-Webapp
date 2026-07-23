@@ -132,16 +132,14 @@ app.delete('/api/account', auth, async (req, res) => {
   } catch (e) { dbErrorResponse(res, e); }
 });
 
-// Build the canonical set of valid achievement IDs once on startup.
-const VALID_ACHIEVEMENT_IDS = new Set(achievements.map(a => a.id));
 
 /**
  * POST /api/achievements — server-side authoritative achievement reconciliation.
  *
  * Computes which achievements the authenticated user has legitimately earned from
  * their complete bust history, persists any that are missing, and returns the full
- * list. Client-supplied IDs are accepted only when they appear in the canonical
- * catalog, so arbitrary forgery is blocked.
+ * list. Only server-computed earned IDs are persisted; client-submitted IDs are
+ * ignored to prevent privilege escalation.
  */
 app.post('/api/achievements', auth, async (req, res) => {
   try {
@@ -151,16 +149,12 @@ app.post('/api/achievements', auth, async (req, res) => {
       query('select count(*) from users', [])
     ]);
     const userCount = Number(userCountResult.rows[0].count);
-    const earned = computeAchievementUnlocks(
+    const toSave = computeAchievementUnlocks(
       req.user.id,
       allBustsResult,
       existingResult.rows,
       { createdAt: req.user.created_at, userCount }
     );
-    // Accept client-submitted IDs only if they exist in the canonical catalog
-    const clientTypes = Array.isArray(req.body?.types) ? req.body.types : [];
-    const validClientTypes = clientTypes.filter(t => VALID_ACHIEVEMENT_IDS.has(t));
-    const toSave = [...new Set([...earned, ...validClientTypes])];
     for (const t of toSave) {
       await query('insert into achievements (user_id, achievement_type) values ($1,$2) on conflict do nothing', [req.user.id, t]);
     }
