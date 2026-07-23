@@ -7,7 +7,7 @@ import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
 import { query, withTransaction } from './db.js';
 import { SCHEMA_SQL } from './schema.js';
-import { computeAchievementUnlocks } from '../src/rules.js';
+import { computeAchievementUnlocks, timeBucket } from '../src/rules.js';
 
 const app = express();
 const server = createServer(app);
@@ -22,7 +22,6 @@ app.use(express.json({ limit: '64kb' }));
 
 function sign(user) { return jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' }); }
 function publicUser(u) { return { id: u.id, username: u.username, avatar_seed: u.avatar_seed, created_at: u.created_at, last_bust_timestamp: u.last_bust_timestamp, tagline: u.tagline || null, showcase: u.showcase || null }; }
-function timeBucket(date = new Date()) { const h = date.getHours(); if (h < 4) return 'Late Night'; if (h < 8) return 'Early Morning'; if (h < 12) return 'Morning'; if (h < 17) return 'Afternoon'; if (h < 21) return 'Evening'; return 'Prime Night'; }
 function dbErrorResponse(res, e) {
   console.error('[db]', e.code || '', e.message);
   if (NETWORK_CODES.has(e.code)) return res.status(503).json({ error: 'Database is unreachable; check DATABASE_URL or network/DNS access' });
@@ -65,7 +64,6 @@ app.post('/api/signup', async (req, res) => {
     const { rows } = await query('insert into users (username, synthetic_email, password_hash, avatar_seed) values ($1,$2,$3,$4) returning *', [username.trim(), synthetic, hash, `${username}-${Date.now()}`]);
     res.json({ user: publicUser(rows[0]), token: sign(rows[0]) });
   } catch (e) {
-    // Only a genuine unique-constraint violation means the name is taken.
     if (e.code === '23505') return res.status(409).json({ error: 'Username already exists' });
     dbErrorResponse(res, e);
   }
@@ -104,8 +102,6 @@ app.post('/api/bust', auth, perUserRateLimit({ keyPrefix: 'bust', windowMs: 30_0
     const now = new Date();
     const { note = '', temp_f = null, pressure = null, lat = null, long = null, city = null, elevation_ft = null, tide_ft = null } = req.body || {};
     const bustRow = await withTransaction(async (client) => {
-      // Lock the user row and check cooldown atomically.
-      // Two concurrent requests will serialize here; only one will find the row eligible.
       const { rows: lockRows } = await client.query(
         `select id from users where id=$1 and (last_bust_timestamp is null or now() - last_bust_timestamp >= interval '2 hours') for update`,
         [req.user.id]
@@ -142,7 +138,6 @@ app.patch('/api/profile', auth, async (req, res) => {
   try {
     const tagline = req.body?.tagline != null ? String(req.body.tagline).slice(0, 80) : req.user.tagline;
     const avatar_seed = req.body?.avatar_seed != null ? String(req.body.avatar_seed).slice(0, 64) : req.user.avatar_seed;
-    // showcase: up to 3 comma-separated achievement ids pinned beside the username
     const showcase = req.body?.showcase != null ? String(req.body.showcase).split(',').filter(Boolean).slice(0, 3).join(',') : req.user.showcase;
     const { rows } = await query('update users set tagline=$1, avatar_seed=$2, showcase=$3 where id=$4 returning *', [tagline, avatar_seed, showcase, req.user.id]);
     broadcast({ type: 'profile.updated', user: publicUser(rows[0]) });
@@ -151,21 +146,12 @@ app.patch('/api/profile', auth, async (req, res) => {
 });
 app.delete('/api/account', auth, async (req, res) => {
   try {
-    await query('delete from users where id=$1', [req.user.id]); // busts/achievements cascade
+    await query('delete from users where id=$1', [req.user.id]);
     broadcast({ type: 'user.deleted', id: req.user.id });
     res.json({ ok: true });
   } catch (e) { dbErrorResponse(res, e); }
 });
 
-
-/**
- * POST /api/achievements — server-side authoritative achievement reconciliation.
- *
- * Computes which achievements the authenticated user has legitimately earned from
- * their complete bust history, persists any that are missing, and returns the full
- * list. Only server-computed earned IDs are persisted; client-submitted IDs are
- * ignored to prevent privilege escalation.
- */
 async function reconcileAchievements(req, res) {
   try {
     const [bustsResult, existingResult, userCountResult] = await Promise.all([
@@ -190,8 +176,23 @@ async function reconcileAchievements(req, res) {
 app.post('/api/achievements/reconcile', auth, perUserRateLimit({ keyPrefix: 'ach-reconcile', windowMs: 10_000, max: 6 }), reconcileAchievements);
 app.post('/api/achievements', auth, perUserRateLimit({ keyPrefix: 'ach-legacy', windowMs: 10_000, max: 6 }), reconcileAchievements);
 
-function broadcast(obj) { const data = JSON.stringify(obj); for (const client of wss.clients) if (client.readyState === 1) client.send(data); }
-wss.on('connection', (ws, req) => { try { const token = new URL(req.url, 'http://localhost').searchParams.get('token'); jwt.verify(token, JWT_SECRET); ws.send(JSON.stringify({ type: 'hello' })); } catch { ws.close(); } });
+function broadcast(obj) {
+  const data = JSON.stringify(obj);
+  for (const client of wss.clients) {
+    if (client.readyState !== 1) continue;
+    try { client.send(data); } catch { /* client will be cleaned up by ws */ }
+  }
+}
+wss.on('connection', (ws, req) => {
+  try {
+    const token = new URL(req.url, 'http://localhost').searchParams.get('token');
+    if (!token) throw new Error('missing token');
+    jwt.verify(token, JWT_SECRET);
+    ws.send(JSON.stringify({ type: 'hello' }));
+  } catch {
+    ws.close(4001, 'Authentication failed');
+  }
+});
 
 app.use((err, req, res, _next) => {
   console.error(err);
@@ -199,7 +200,6 @@ app.use((err, req, res, _next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-// Ensure schema exists on boot so a fresh database never masquerades as "username taken".
 try { await query(SCHEMA_SQL, []); console.log('Schema verified.'); }
 catch (e) { console.warn(`Schema check skipped (${e.code || e.message}) — run npm run db:migrate once the database is reachable.`); }
 
