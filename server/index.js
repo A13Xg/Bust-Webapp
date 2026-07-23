@@ -7,7 +7,7 @@ import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
 import { query, withTransaction } from './db.js';
 import { SCHEMA_SQL } from './schema.js';
-import { computeAchievementUnlocks, achievements } from '../src/rules.js';
+import { computeAchievementUnlocks } from '../src/rules.js';
 
 const app = express();
 const server = createServer(app);
