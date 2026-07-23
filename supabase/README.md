@@ -34,3 +34,7 @@ Do not rerun only `setup.sql` and assume the database is current. The migration 
 - Confirm two reconciliation calls are idempotent.
 - Confirm expansion, social, and meta achievements persist through the Edge Function.
 - Confirm histories larger than 1,000 rows are fully reconciled.
+
+## Time semantics
+
+Express and static Supabase reconciliation execute the same JavaScript evaluator, removing backend-specific SQL timezone drift. Calendar achievements still use the evaluator runtime's local calendar timezone. Moving to a persisted user or event timezone would be a separate product and data migration rather than a silent behavior change.
