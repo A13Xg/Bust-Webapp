@@ -143,15 +143,15 @@ app.delete('/api/account', auth, async (req, res) => {
  */
 app.post('/api/achievements', auth, async (req, res) => {
   try {
-    const [allBustsResult, existingResult, userCountResult] = await Promise.all([
-      bustRows(1000),
-      query('select * from achievements', []),
+    const [bustsResult, existingResult, userCountResult] = await Promise.all([
+      query('select * from busts where user_id=$1 order by timestamp asc', [req.user.id]),
+      query('select * from achievements where user_id=$1', [req.user.id]),
       query('select count(*) from users', [])
     ]);
     const userCount = Number(userCountResult.rows[0].count);
     const toSave = computeAchievementUnlocks(
       req.user.id,
-      allBustsResult,
+      bustsResult.rows,
       existingResult.rows,
       { createdAt: req.user.created_at, userCount }
     );
