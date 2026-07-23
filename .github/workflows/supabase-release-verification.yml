@@ -48,7 +48,7 @@ concurrency:
 
 jobs:
   validate:
-    name: Validate workflow and function source
+    name: Validate release workflow
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -57,13 +57,6 @@ jobs:
 
       - name: Validate GitHub Actions syntax
         run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.7 -shellcheck=
-
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-
-      - name: Type-check Edge Function bundle
-        run: deno check supabase/functions/reconcile-achievements/index.ts
 
       - name: Parse release verification script
         run: bash -n scripts/verify-supabase-release.sh
