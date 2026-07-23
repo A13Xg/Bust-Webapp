@@ -5,10 +5,7 @@
  *   time, talks to Supabase directly (auth, postgrest, realtime) — no Node server.
  *   This is what makes a GitHub Pages deployment work.
  */
-import { timeBucket, achievements } from './rules.js';
-
-// Canonical set of valid achievement IDs – used in Supabase mode to block forgery.
-const VALID_ACHIEVEMENT_IDS = new Set(achievements.map(a => a.id));
+import { timeBucket } from './rules.js';
 
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -32,16 +29,31 @@ const serverBackend = {
   async dashboard() { return rest('/dashboard'); },
   async bust(payload) { return (await rest('/bust', { method: 'POST', body: JSON.stringify(payload) })).bust; },
   async patchBustNote(id, note) { return (await rest(`/bust/${encodeURIComponent(id)}/note`, { method: 'PATCH', body: JSON.stringify({ note }) })).bust; },
-  async saveAchievements(types) { return (await rest('/achievements', { method: 'POST', body: JSON.stringify({ types }) })).achievements; },
+  async recentBusts(limit = 60) { return (await rest(`/busts/recent?limit=${encodeURIComponent(limit)}`)).busts; },
+  async reconcileAchievements() { return await rest('/achievements/reconcile', { method: 'POST' }); },
+  async saveAchievements(types) { return (await this.reconcileAchievements(types)).achievements; },
   async patchProfile(patch) { return (await rest('/profile', { method: 'PATCH', body: JSON.stringify(patch) })).user; },
-  subscribe({ onBust, onProfile }) {
-    // Auto-reconnecting WebSocket with exponential backoff (1s → 15s cap).
-    let ws = null, closed = false, delay = 1000;
+  subscribe({ onBust, onProfile, onStatus }) {
+    // Auto-reconnecting WebSocket with exponential backoff + jitter (1s → 15s cap).
+    let ws = null, closed = false, delay = 1000, reconnectTimer = null;
+    const clearReconnect = () => {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+    };
+    const scheduleReconnect = () => {
+      clearReconnect();
+      const base = delay = Math.min(delay * 2, 15000);
+      const jitter = Math.floor(Math.random() * 700);
+      reconnectTimer = setTimeout(connect, base + jitter);
+    };
     const connect = () => {
       if (closed) return;
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       ws = new WebSocket(`${proto}://${location.host}/ws?token=${localStorage.getItem('bust_token')}`);
-      ws.onopen = () => { delay = 1000; };
+      ws.onopen = () => { clearReconnect(); delay = 1000; onStatus?.('SUBSCRIBED'); };
       ws.onmessage = e => {
         try {
           const msg = JSON.parse(e.data);
@@ -53,14 +65,16 @@ const serverBackend = {
         } catch { /* ignore malformed frames */ }
       };
       ws.onclose = (event) => {
+        ws = null;
         // Code 4001 signals authentication failure – stop reconnecting.
-        if (closed || event.code === 4001) return;
-        setTimeout(connect, delay = Math.min(delay * 2, 15000));
+        if (closed || event.code === 4001) { onStatus?.('CLOSED'); return; }
+        onStatus?.('TIMED_OUT');
+        scheduleReconnect();
       };
-      ws.onerror = () => { try { ws.close(); } catch {} };
+      ws.onerror = () => { onStatus?.('CHANNEL_ERROR'); try { ws.close(); } catch {} };
     };
     connect();
-    return () => { closed = true; try { ws?.close(); } catch {} };
+    return () => { closed = true; clearReconnect(); try { ws?.close(); } catch {} ws = null; onStatus?.('CLOSED'); };
   }
 };
 
@@ -137,6 +151,13 @@ const staticBackend = {
     if (achievements.error) throw new Error(achievements.error.message);
     return { users: profiles.map(toUser), busts: busts.data.map(joinBust), achievements: achievements.data };
   },
+  async recentBusts(limit = 60) {
+    const sb = await getSupa();
+    const result = await sb.from('busts').select('*').order('timestamp', { ascending: false }).limit(Math.max(1, Math.min(200, Number(limit) || 60)));
+    if (result.error) throw new Error(result.error.message);
+    if (!profileCache.size) { try { await refreshProfiles(sb); } catch {} }
+    return result.data.map(joinBust);
+  },
   async bust(payload) {
     const sb = await getSupa();
     const { data: { user } } = await sb.auth.getUser();
@@ -155,21 +176,17 @@ const staticBackend = {
     if (error) throw new Error(error.message);
     return joinBust(data);
   },
-  async saveAchievements(types) {
+  async reconcileAchievements() {
     const sb = await getSupa();
     const { data: { user } } = await sb.auth.getUser();
     if (!user) throw new Error('Not signed in');
-    // Filter to only catalog IDs to prevent arbitrary achievement injection.
-    const validTypes = types.filter(t => VALID_ACHIEVEMENT_IDS.has(t));
-    if (validTypes.length) {
-      const rows = validTypes.slice(0, 60).map(t => ({ user_id: user.id, achievement_type: t }));
-      const { error } = await sb.from('achievements').upsert(rows, { onConflict: 'user_id,achievement_type', ignoreDuplicates: true });
-      if (error) throw new Error(error.message);
-    }
+    const rpc = await sb.rpc('reconcile_achievements');
+    if (rpc.error) throw new Error(rpc.error.message);
     const { data, error } = await sb.from('achievements').select('*').order('unlocked_at', { ascending: false });
     if (error) throw new Error(error.message);
-    return data;
+    return { achievements: data };
   },
+  async saveAchievements() { return (await this.reconcileAchievements()).achievements; },
   async patchProfile(patch) {
     const sb = await getSupa();
     const { data: { user } } = await sb.auth.getUser();
@@ -183,7 +200,7 @@ const staticBackend = {
     profileCache.set(data.id, data);
     return toUser(data);
   },
-  subscribe({ onBust, onProfile }) {
+  subscribe({ onBust, onProfile, onStatus }) {
     let channel;
     let unsubscribed = false;
     getSupa().then(sb => {
@@ -201,9 +218,15 @@ const staticBackend = {
           profileCache.set(payload.new.id, payload.new);
           onProfile?.(toUser(payload.new));
         })
-        .subscribe();
+        .subscribe(status => {
+          if (unsubscribed) return;
+          if (status === 'SUBSCRIBED') onStatus?.('SUBSCRIBED');
+          else if (status === 'CHANNEL_ERROR') onStatus?.('CHANNEL_ERROR');
+          else if (status === 'TIMED_OUT') onStatus?.('TIMED_OUT');
+          else if (status === 'CLOSED') onStatus?.('CLOSED');
+        });
     });
-    return () => { unsubscribed = true; channel?.unsubscribe(); };
+    return () => { unsubscribed = true; channel?.unsubscribe(); onStatus?.('CLOSED'); };
   }
 };
 

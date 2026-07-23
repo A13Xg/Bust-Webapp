@@ -24,3 +24,17 @@ export async function sendBrowserNotification(title, options, notificationApi = 
     return false;
   }
 }
+
+export function closePermissionPrompt(storage = globalThis.sessionStorage, onClose = () => {}) {
+  try {
+    storage?.setItem?.('bust_perm_prompted', '1');
+  } catch {}
+  onClose();
+}
+
+export function markSeenEvent(seenSet, eventId) {
+  if (!seenSet || !eventId) return false;
+  if (seenSet.has(eventId)) return false;
+  seenSet.add(eventId);
+  return true;
+}

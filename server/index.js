@@ -74,6 +74,14 @@ app.get('/api/dashboard', auth, async (req, res) => {
     res.json({ users: users.rows, busts, achievements: achievementsResult.rows });
   } catch (e) { dbErrorResponse(res, e); }
 });
+app.get('/api/busts/recent', auth, async (req, res) => {
+  try {
+    const requested = Number(req.query.limit);
+    const limit = Number.isFinite(requested) ? Math.max(1, Math.min(200, requested)) : 60;
+    const busts = await bustRows(limit);
+    res.json({ busts });
+  } catch (e) { dbErrorResponse(res, e); }
+});
 app.post('/api/bust', auth, async (req, res) => {
   try {
     const now = new Date();
@@ -141,7 +149,7 @@ app.delete('/api/account', auth, async (req, res) => {
  * list. Only server-computed earned IDs are persisted; client-submitted IDs are
  * ignored to prevent privilege escalation.
  */
-app.post('/api/achievements', auth, async (req, res) => {
+async function reconcileAchievements(req, res) {
   try {
     const [bustsResult, existingResult, userCountResult] = await Promise.all([
       query('select * from busts where user_id=$1 order by timestamp asc', [req.user.id]),
@@ -161,7 +169,9 @@ app.post('/api/achievements', auth, async (req, res) => {
     const { rows } = await query('select * from achievements order by unlocked_at desc');
     res.json({ achievements: rows });
   } catch (e) { dbErrorResponse(res, e); }
-});
+}
+app.post('/api/achievements/reconcile', auth, reconcileAchievements);
+app.post('/api/achievements', auth, reconcileAchievements);
 
 function broadcast(obj) { const data = JSON.stringify(obj); for (const client of wss.clients) if (client.readyState === 1) client.send(data); }
 wss.on('connection', (ws, req) => { try { const token = new URL(req.url, 'http://localhost').searchParams.get('token'); jwt.verify(token, JWT_SECRET); ws.send(JSON.stringify({ type: 'hello' })); } catch { ws.close(); } });

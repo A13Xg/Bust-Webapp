@@ -5,23 +5,23 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Bell, ChevronUp, Gauge, LogOut, MapPin, Medal, Mountain, Pencil, Repeat2, Sparkles, Thermometer, Trophy, Volume2, VolumeX, Waves, X } from 'lucide-react';
 import 'material-symbols/outlined.css';
 import './styles.css';
-import { achievements, capUnlocksPerBust, computeAchievementUnlocks, deriveAllTimeRecords, derivePersonalStats, deriveStreaks, buildTrend, levelForXp, timeBucket, twoHoursRemainingMs, todayKey } from './rules.js';
+import { achievements, capUnlocksPerBust, computeAchievementUnlocks, deriveAllTimeRecords, derivePersonalStats, deriveStreaks, buildTrend, finiteNumber, levelForXp, timeBucket, twoHoursRemainingMs, todayKey } from './rules.js';
 import { expansionItems } from './expansion.js';
 import { TrendChart, DonutChart, HourHistogram, Sparkline, ScatterChart, HBarChart } from './charts.jsx';
 import { backend } from './backend.js';
 import * as sfx from './audio.js';
 import tideStations from './tide-stations.json';
 import { ErrorBoundary } from './ErrorBoundary.jsx';
-import { getNotificationPermission, requestNotificationPermission, sendBrowserNotification } from './notifications.js';
+import { closePermissionPrompt, getNotificationPermission, markSeenEvent, requestNotificationPermission, sendBrowserNotification } from './notifications.js';
 import { useAchievementQueue } from './useAchievementQueue.js';
 
 export const asset = p => import.meta.env.BASE_URL + String(p).replace(/^\//, '');
 function avatar(seed) { return `https://api.dicebear.com/9.x/identicon/svg?seed=${encodeURIComponent(seed || 'bust')}&backgroundColor=0a0a0b&rowColor=ff5e00,f5f0e8`; }
 function fmt(ts) { return new Date(ts).toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }); }
 function rankForDay(bust, busts) { const d = new Date(bust.timestamp).toDateString(); const list = busts.filter(b=>new Date(b.timestamp).toDateString()===d).sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp)); return list.findIndex(b=>b.id===bust.id)+1 || '—'; }
-function pressureLabel(p){ p=Number(p); if(!Number.isFinite(p)) return null; if(p<990) return 'Very Low'; if(p<1005) return 'Low'; if(p<1015) return 'Medium'; if(p<1025) return 'High'; return 'Very High'; }
-function elevationLabel(ft){ ft=Number(ft); return Number.isFinite(ft)?`${Math.round(ft)}ft ASL`:'—'; }
-function tideLabel(ft){ ft=Number(ft); return Number.isFinite(ft)?`${ft>=0?'High':'Low'} / ${Math.abs(ft).toFixed(1)}ft`:'—'; }
+function pressureLabel(p){ p=finiteNumber(p); if(p==null) return null; if(p<990) return 'Very Low'; if(p<1005) return 'Low'; if(p<1015) return 'Medium'; if(p<1025) return 'High'; return 'Very High'; }
+function elevationLabel(ft){ ft=finiteNumber(ft); return ft!=null?`${Math.round(ft)}ft ASL`:'—'; }
+function tideLabel(ft){ ft=finiteNumber(ft); return ft!=null?`${ft>=0?'High':'Low'} / ${Math.abs(ft).toFixed(1)}ft`:'—'; }
 function nearestTideStationId(lat,long){ let best=null,bestD=Infinity; const R=3958.8,toR=x=>x*Math.PI/180; for(const [id,slat,slng] of tideStations){ const dLat=toR(slat-lat),dLon=toR(slng-long); const h=Math.sin(dLat/2)**2+Math.cos(toR(lat))*Math.cos(toR(slat))*Math.sin(dLon/2)**2; const d=2*R*Math.asin(Math.sqrt(h)); if(d<bestD){bestD=d;best=id;} } return best; }
 async function fetchTideFt(lat,long){
   const stationId=nearestTideStationId(lat,long);
@@ -33,8 +33,8 @@ async function fetchTideFt(lat,long){
   const nearest=points.reduce((best,p)=>{ const t=new Date(p.t.replace(' ','T')+'Z').getTime(); const diff=Math.abs(t-now); return diff<best.diff?{diff,v:Number(p.v)}:best; },{diff:Infinity,v:null});
   return Number.isFinite(nearest.v)?nearest.v:null;
 }
-function pressureBandValue(p){ p=Number(p); if(!Number.isFinite(p)) return null; if(p<990) return 0; if(p<1005) return 1; if(p<1015) return 2; if(p<1025) return 3; return 4; }
-function tempBandValue(t){ t=Number(t); if(!Number.isFinite(t)) return null; if(t<32) return 0; if(t<52) return 1; if(t<72) return 2; if(t<92) return 3; return 4; }
+function pressureBandValue(p){ p=finiteNumber(p); if(p==null) return null; if(p<990) return 0; if(p<1005) return 1; if(p<1015) return 2; if(p<1025) return 3; return 4; }
+function tempBandValue(t){ t=finiteNumber(t); if(t==null) return null; if(t<32) return 0; if(t<52) return 1; if(t<72) return 2; if(t<92) return 3; return 4; }
 const tierUrl = t => ['bronze','silver','gold','platinum','mythic'].includes(t) ? asset(`badges/512/${t}.png`) : null;
 const matMap={Activity:'monitoring',AlarmClock:'alarm',Clock3:'schedule',Sparkles:'auto_awesome',Repeat2:'repeat',Moon:'dark_mode',Sun:'light_mode',Sunrise:'wb_twilight',Flame:'local_fire_department',Snowflake:'ac_unit',Gauge:'speed',NotebookPen:'edit_note',BadgeCheck:'verified',CalendarDays:'calendar_month',MapPinned:'location_on',Crown:'crown',Medal:'military_tech',Trophy:'trophy',Shield:'shield'};
 const iconFallback={monitoring:['Pulse Oracle','⌁'],alarm:['Dawn Bell','⏰'],schedule:['Clock Sigil','⏱'],auto_awesome:['Stardust','✦'],repeat:['Echo Loop','↻'],dark_mode:['Moonwatch','☾'],light_mode:['Sunflare','☀'],wb_twilight:['First Light','◐'],local_fire_department:['Phoenix Flame','🔥'],ac_unit:['Frost Rune','❄'],speed:['Velocity Mark','⌁'],edit_note:['Field Quill','✎'],verified:['Seal of Proof','✓'],calendar_month:['Calendar Seal','▣'],location_on:['Map Pin','⌖'],crown:['Crown Mark','♛'],military_tech:['Medal Star','★'],trophy:['Victory Cup','🏆'],shield:['Ward Shield','⬟']};
@@ -89,18 +89,18 @@ function itemProgress(item,busts=[],user,unlocks=[]){
   const notes=own.map(b=>String(b.note||'')).filter(n=>n.trim().length);
   if(unlocked) return {value:goal,goal,pct:100,label:`${goal}/${goal}`};
   let value=0;
-  if(item.track==='legacy') value={first_release:own.length,double_shift:Math.max(0,...Object.values(own.reduce((m,b)=>{const k=todayKey(b.timestamp);m[k]=(m[k]||0)+1;return m;},{}))),night_ops:count(b=>timeBucket(b.timestamp)==='Late Night'),early_bird:count(b=>timeBucket(b.timestamp)==='Early Morning'),heat_seeker:count(b=>Number(b.temp_f)>85),cold_front:count(b=>Number(b.temp_f)<45),high_pressure:count(b=>Number(b.pressure)>1020),field_reporter:count(b=>(b.note||'').trim().length>=30),hat_trick:own.length,week_warrior:own.length,cartographer:count(b=>b.lat!=null&&b.long!=null)}[item.id]||0;
-  else if(item.track==='scorcher') value=count(b=>Number(b.temp_f)>100);
+  if(item.track==='legacy') value={first_release:own.length,double_shift:Math.max(0,...Object.values(own.reduce((m,b)=>{const k=todayKey(b.timestamp);m[k]=(m[k]||0)+1;return m;},{}))),night_ops:count(b=>timeBucket(b.timestamp)==='Late Night'),early_bird:count(b=>timeBucket(b.timestamp)==='Early Morning'),heat_seeker:count(b=>finiteNumber(b.temp_f)!=null&&finiteNumber(b.temp_f)>85),cold_front:count(b=>finiteNumber(b.temp_f)!=null&&finiteNumber(b.temp_f)<45),high_pressure:count(b=>finiteNumber(b.pressure)!=null&&finiteNumber(b.pressure)>1020),field_reporter:count(b=>(b.note||'').trim().length>=30),hat_trick:own.length,week_warrior:own.length,cartographer:count(b=>finiteNumber(b.lat)!=null&&finiteNumber(b.long)!=null)}[item.id]||0;
+  else if(item.track==='scorcher') value=count(b=>finiteNumber(b.temp_f)!=null&&finiteNumber(b.temp_f)>100);
   else if(item.track==='daypart') value=distinct(b=>['Early Morning','Morning'].includes(timeBucket(b.timestamp))?'morning':timeBucket(b.timestamp)==='Afternoon'?'noon':'night');
   else if(item.track==='marathon') value=own.length;
   else if(item.track==='weekend') value=Math.max(distinct(b=>[0,6].includes(new Date(b.timestamp).getDay())?new Date(b.timestamp).getDay():null),count(b=>[0,6].includes(new Date(b.timestamp).getDay())));
-  else if(item.track==='pressure') value=count(b=>Number(b.pressure)>1020);
-  else if(item.track==='cold') value=count(b=>Number(b.temp_f)<45);
+  else if(item.track==='pressure') value=count(b=>finiteNumber(b.pressure)!=null&&finiteNumber(b.pressure)>1020);
+  else if(item.track==='cold') value=count(b=>finiteNumber(b.temp_f)!=null&&finiteNumber(b.temp_f)<45);
   else if(item.track==='scribe') value=count(b=>(b.note||'').trim().length>=30);
-  else if(item.track==='cartographer') value=count(b=>b.lat!=null&&b.long!=null);
+  else if(item.track==='cartographer') value=count(b=>finiteNumber(b.lat)!=null&&finiteNumber(b.long)!=null);
   else if(item.track==='streak') value=Math.max(...Object.values(own.reduce((m,b)=>{const k=todayKey(b.timestamp);m[k]=(m[k]||0)+1;return m;},{})),own.length);
   else if(item.track==='night') value=count(b=>timeBucket(b.timestamp)==='Late Night');
-  else if(item.track==='expansion') value={on_the_dot:count(b=>new Date(b.timestamp).getMinutes()===0),minute_hand:count(b=>new Date(b.timestamp).getMinutes()===0),second_hand:count(b=>new Date(b.timestamp).getMinutes()===0),weather_vane:distinct(b=>pressureBandValue(b.pressure)),thermometer_breaker:distinct(b=>tempBandValue(b.temp_f)),storm_rider:count(b=>pressureBandValue(b.pressure)===0),sea_level_scout:count(b=>Number.isFinite(Number(b.elevation_ft))&&Number(b.elevation_ft)<100),thin_air:count(b=>Number.isFinite(Number(b.elevation_ft))&&Number(b.elevation_ft)>=5280),cloudline_climber:count(b=>Number.isFinite(Number(b.elevation_ft))&&Number(b.elevation_ft)>=8000),mile_high_club:count(b=>Number.isFinite(Number(b.elevation_ft))&&Number(b.elevation_ft)>=5280),altitude_sampler:distinct(b=>{const e=Number(b.elevation_ft); if(!Number.isFinite(e)) return null; if(e<100)return 0; if(e<1000)return 1; if(e<5280)return 2; if(e<8000)return 3; return 4;}),summit_circuit:count(b=>Number.isFinite(Number(b.elevation_ft))&&Number(b.elevation_ft)>=8000),odometer:(()=>{const pts=own.filter(b=>b.lat!=null&&b.long!=null); let sum=0; const R=3958.8,toR=x=>x*Math.PI/180; for(let i=1;i<pts.length;i++){const a=pts[i-1],c=pts[i]; const dLat=toR(Number(c.lat)-Number(a.lat)),dLon=toR(Number(c.long)-Number(a.long)); const h=Math.sin(dLat/2)**2+Math.cos(toR(Number(a.lat)))*Math.cos(toR(Number(c.lat)))*Math.sin(dLon/2)**2; sum+=2*R*Math.asin(Math.sqrt(h));} return Math.round(sum);})(),landmark_legend:Math.max(0,...Object.values(own.reduce((m,b)=>{if(b.city)m[b.city]=(m[b.city]||0)+1;return m;},{}))),novelist:count(b=>String(b.note||'').length>=240),full_manuscript:count(b=>String(b.note||'').length>=240),shakespeare:count(b=>/\b(thee|thou|thy)\b/i.test(b.note||'')),bard_of_the_bay:count(b=>/\b(thee|thou|thy)\b/i.test(b.note||'')),emoji_dictionary:new Set(notes.join(' ').match(/\p{Extended_Pictographic}/gu)||[]).size,completionist_i:earnedIdSet(unlocks,user.id).size,completionist_ii:earnedIdSet(unlocks,user.id).size,completionist_iii:earnedIdSet(unlocks,user.id).size,xp_tycoon:[...earnedIdSet(unlocks,user.id)].map(id=>achievements.find(x=>x.id===id)?.points||0).reduce((s,p)=>s+p,0),the_collector:(()=>{const ids=earnedIdSet(unlocks,user.id); const cats=['Timing & Precision','Squad Play','Calendar','Expedition','Wordsmith']; return cats.filter(cat=>expansionItems.some(i=>i.kind==='badge'&&i.category===cat&&ids.has(i.id))).length;})()}[item.id]??0;
+  else if(item.track==='expansion') value={on_the_dot:count(b=>new Date(b.timestamp).getMinutes()===0),minute_hand:count(b=>new Date(b.timestamp).getMinutes()===0),second_hand:count(b=>new Date(b.timestamp).getMinutes()===0),weather_vane:distinct(b=>pressureBandValue(b.pressure)),thermometer_breaker:distinct(b=>tempBandValue(b.temp_f)),storm_rider:count(b=>pressureBandValue(b.pressure)===0),sea_level_scout:count(b=>finiteNumber(b.elevation_ft)!=null&&finiteNumber(b.elevation_ft)<100),thin_air:count(b=>finiteNumber(b.elevation_ft)!=null&&finiteNumber(b.elevation_ft)>=5280),cloudline_climber:count(b=>finiteNumber(b.elevation_ft)!=null&&finiteNumber(b.elevation_ft)>=8000),mile_high_club:count(b=>finiteNumber(b.elevation_ft)!=null&&finiteNumber(b.elevation_ft)>=5280),altitude_sampler:distinct(b=>{const e=finiteNumber(b.elevation_ft); if(e==null) return null; if(e<100)return 0; if(e<1000)return 1; if(e<5280)return 2; if(e<8000)return 3; return 4;}),summit_circuit:count(b=>finiteNumber(b.elevation_ft)!=null&&finiteNumber(b.elevation_ft)>=8000),odometer:(()=>{const pts=own.filter(b=>finiteNumber(b.lat)!=null&&finiteNumber(b.long)!=null); let sum=0; const R=3958.8,toR=x=>x*Math.PI/180; for(let i=1;i<pts.length;i++){const a=pts[i-1],c=pts[i]; const aLat=finiteNumber(a.lat),aLong=finiteNumber(a.long),cLat=finiteNumber(c.lat),cLong=finiteNumber(c.long); if(aLat==null||aLong==null||cLat==null||cLong==null) continue; const dLat=toR(cLat-aLat),dLon=toR(cLong-aLong); const h=Math.sin(dLat/2)**2+Math.cos(toR(aLat))*Math.cos(toR(cLat))*Math.sin(dLon/2)**2; sum+=2*R*Math.asin(Math.sqrt(h));} return Math.round(sum);})(),landmark_legend:Math.max(0,...Object.values(own.reduce((m,b)=>{if(b.city)m[b.city]=(m[b.city]||0)+1;return m;},{}))),novelist:count(b=>String(b.note||'').length>=240),full_manuscript:count(b=>String(b.note||'').length>=240),shakespeare:count(b=>/\b(thee|thou|thy)\b/i.test(b.note||'')),bard_of_the_bay:count(b=>/\b(thee|thou|thy)\b/i.test(b.note||'')),emoji_dictionary:new Set(notes.join(' ').match(/\p{Extended_Pictographic}/gu)||[]).size,completionist_i:earnedIdSet(unlocks,user.id).size,completionist_ii:earnedIdSet(unlocks,user.id).size,completionist_iii:earnedIdSet(unlocks,user.id).size,xp_tycoon:[...earnedIdSet(unlocks,user.id)].map(id=>achievements.find(x=>x.id===id)?.points||0).reduce((s,p)=>s+p,0),the_collector:(()=>{const ids=earnedIdSet(unlocks,user.id); const cats=['Timing & Precision','Squad Play','Calendar','Expedition','Wordsmith']; return cats.filter(cat=>expansionItems.some(i=>i.kind==='badge'&&i.category===cat&&ids.has(i.id))).length;})()}[item.id]??0;
   return {value:cap(value),goal,pct:Math.min(100,Math.round(cap(value)/goal*100)),label:`${cap(value)}/${goal}`};
 }
 
@@ -140,7 +140,7 @@ function DeleteAccountModal({onClose,onDeleted}){
 
 /** Shown immediately after login when location or notifications aren't granted.
  *  Location permission is requested on open; notification permission requires an
- *  explicit button click. SKIP dismisses, OKAY reloads. */
+ *  explicit button click. OKAY dismisses locally without reloading. */
 function PermissionGate(){
   const [show,setShow]=useState(false);
   const [notif,setNotif]=useState(getNotificationPermission());
@@ -152,8 +152,7 @@ function PermissionGate(){
       if(!alive) return;
       setGeo(g);
       setNotif(n);
-      // sessionStorage flag guarantees the gate appears at most once per session,
-      // so OKAY's reload can never re-trigger it in a loop.
+      // sessionStorage flag guarantees the gate appears at most once per session.
       const alreadyPrompted=sessionStorage.getItem('bust_perm_prompted')==='1';
       if(!alreadyPrompted && (g!=='granted' || (n!=='granted'&&n!=='unsupported'))) setShow(true);
     })(); return()=>{ alive=false; }; },[]);
@@ -175,7 +174,7 @@ function PermissionGate(){
     </div>
     {notif!=='granted'&&notif!=='unsupported'&&<button className="mf-button ghost" onClick={askNotifications} style={{marginBottom:'8px'}}>ENABLE NOTIFICATIONS</button>}
     {(geo==='denied'||notif==='denied')&&<small className="showcase-hint">Blocked? Click the padlock in the address bar to re-enable, then hit OKAY.</small>}
-    <div className="picker-actions"><button className="mf-button" onClick={()=>{ sessionStorage.setItem('bust_perm_prompted','1'); location.reload(); }}>OKAY</button></div>
+    <div className="picker-actions"><button className="mf-button" onClick={()=>closePermissionPrompt(sessionStorage, ()=>setShow(false))}>OKAY</button></div>
   </div></div>,document.body) }
 
 function Login({ onAuthed }) {
@@ -186,47 +185,81 @@ function Login({ onAuthed }) {
 
 function App(){ const [user,setUser]=useState(null); const [boot,setBoot]=useState(true); useEffect(()=>{backend.me().then(setUser).catch(()=>{}).finally(()=>setBoot(false))},[]); if(boot) return <div className="boot">UNPACKING BUST BAY…</div>; return user?<Dashboard user={user} setUser={setUser}/>:<Login onAuthed={setUser}/> }
 
-function Dashboard({user,setUser}){ const [busts,setBusts]=useState([]),[users,setUsers]=useState([]),[unlocks,setUnlocks]=useState([]); const [debugBusts,setDebugBusts]=useState([]),[debugUnlocks,setDebugUnlocks]=useState([]),[debugXp,setDebugXp]=useState(0); const [overlay,setOverlay]=useState(null),[selected,setSelected]=useState(null),[phase,setPhase]=useState('idle'),[pendingCtx,setPendingCtx]=useState(null),[toasts,setToasts]=useState([]),[unread,setUnread]=useState(0),[muted,setMuted]=useState(sfx.isMuted()); const bustRef=useRef([]); bustRef.current=busts; const chargeSfx=useRef(null); const [,tick]=useState(0);
+function Dashboard({user,setUser}){ const [busts,setBusts]=useState([]),[users,setUsers]=useState([]),[unlocks,setUnlocks]=useState([]); const [debugBusts,setDebugBusts]=useState([]),[debugUnlocks,setDebugUnlocks]=useState([]),[debugXp,setDebugXp]=useState(0); const [overlay,setOverlay]=useState(null),[selected,setSelected]=useState(null),[phase,setPhase]=useState('idle'),[pendingCtx,setPendingCtx]=useState(null),[toasts,setToasts]=useState([]),[unread,setUnread]=useState(0),[muted,setMuted]=useState(sfx.isMuted()); const bustRef=useRef([]); bustRef.current=busts; const unlocksRef=useRef([]); unlocksRef.current=unlocks; const usersRef=useRef([]); usersRef.current=users; const chargeSfx=useRef(null); const seenRealtimeEvents=useRef(new Set()); const [,tick]=useState(0);
   const { current: badgeToast, enqueue: enqueueBadge, dismiss: dismissBadge } = useAchievementQueue(5200);
   const remaining = twoHoursRemainingMs(user.last_bust_timestamp); const locked = remaining > 0 && phase==='idle';
   useEffect(()=>{ if(remaining>0){ const t=setTimeout(()=>tick(x=>x+1), remaining+300); return()=>clearTimeout(t); } },[remaining]);
+  const userAchievementSet = useCallback((rows) => {
+    return new Set(rows.filter(a => a.user_id === user.id).map(a => a.achievement_type));
+  }, [user.id]);
+  const enqueueRestoredSummary = useCallback((count) => {
+    if (!count) return;
+    enqueueBadge([{ id: `restored-${Date.now()}-${count}`, name: `${count} historical achievements restored`, tier: 'platinum', points: 0, icon: 'Sparkles', accent: '#95d5b2', isRestorationSummary: true, restoredCount: count }]);
+  }, [enqueueBadge]);
   // Persist all earned achievements (no presentation cap) and return newly saved IDs for display.
-  const persistAndShowUnlocks = useCallback(async (allNew, isRestored=false) => {
+  const persistAndShowUnlocks = useCallback(async (allNew) => {
     if (!allNew.length) return;
+    const before = userAchievementSet(unlocksRef.current);
     const saved = await backend.saveAchievements(allNew);
-    setUnlocks(saved);
-    const displayItems = capUnlocksPerBust(allNew).map(id => achievements.find(a => a.id === id)).filter(Boolean);
+    const allAchievements = saved.achievements || saved;
+    setUnlocks(allAchievements);
+    const after = userAchievementSet(allAchievements);
+    const newlyPersisted = allNew.filter(id => after.has(id) && !before.has(id));
+    const displayItems = capUnlocksPerBust(newlyPersisted).map(id => achievements.find(a => a.id === id)).filter(Boolean);
     if (displayItems.length) {
-      enqueueBadge(displayItems.map(item => ({...item, isRestored})));
+      enqueueBadge(displayItems);
       sfx.play('badge', {volume:.85});
     }
-  }, [enqueueBadge]);
-  async function refresh(){ const d=await backend.dashboard(); setBusts(d.busts); setUsers(d.users); setUnlocks(d.achievements);
-    // Reconcile historical achievements that may have been missed due to the old presentation cap.
+  }, [enqueueBadge, userAchievementSet]);
+  const mergeRecentBusts = useCallback((recent = []) => {
+    if (!Array.isArray(recent) || !recent.length) return;
+    setBusts(prev => {
+      const map = new Map(prev.map(b => [b.id, b]));
+      for (const bust of recent) map.set(bust.id, bust);
+      return [...map.values()].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    });
+  }, []);
+  const refresh = useCallback(async () => {
+    const d = await backend.dashboard();
+    setBusts(d.busts);
+    setUsers(d.users);
+    setUnlocks(d.achievements);
     try {
-      const allNew=computeAchievementUnlocks(user.id,d.busts,d.achievements,{createdAt:user.created_at,userCount:d.users.length});
-      if(allNew.length) await persistAndShowUnlocks(allNew, true);
-    } catch(e) { console.warn('[reconcile]', e.message); }
-  }
+      const before = userAchievementSet(d.achievements);
+      const reconciled = await backend.reconcileAchievements();
+      const allAchievements = reconciled.achievements || reconciled;
+      setUnlocks(allAchievements);
+      const after = userAchievementSet(allAchievements);
+      const restoredCount = [...after].filter(id => !before.has(id)).length;
+      if (restoredCount > 0) enqueueRestoredSummary(restoredCount);
+    } catch (e) { console.warn('[reconcile]', e.message); }
+  }, [enqueueRestoredSummary, userAchievementSet]);
   useEffect(()=>{ refresh().catch(console.error); const unsub=backend.subscribe({
       onBust: (bust, eventType='created')=>{
+        const stableEventId = `${eventType}:${bust.id}`;
+        if (!markSeenEvent(seenRealtimeEvents.current, stableEventId)) return;
         setBusts(prev=>[bust,...prev.filter(b=>b.id!==bust.id)]); setSelected(prev=>prev?.id===bust.id?{...prev,...bust}:prev); setUsers(prev=>prev.map(u=>u.id===bust.user_id?{...u,last_bust_timestamp:bust.timestamp}:u));
         // Only show toast + increment unread for new busts from OTHER users; not for note edits.
-        if(bust.user_id!==user.id && eventType==='created'){ setUnread(n=>n+1); setToasts(t=>[{id:crypto.randomUUID(),bust},...t]); void sendBrowserNotification(`${bust.username} logged a BUST`, { body: bust.note || 'Pressure event received.' }); }
+        if(bust.user_id!==user.id && eventType==='created'){ setUnread(n=>n+1); setToasts(t=>[{id:crypto.randomUUID(),bust},...t]); void sendBrowserNotification(`${bust.username} logged a BUST`, { body: bust.note || 'Pressure event received.', tag: `bust-${bust.id}` }); }
       },
-      onProfile: p=>{ setUsers(prev=>prev.map(u=>u.id===p.id?{...u,...p}:u)); }
-    }); return unsub; },[]);
+      onProfile: p=>{ setUsers(prev=>prev.map(u=>u.id===p.id?{...u,...p}:u)); },
+      onStatus: async status => {
+        if (status === 'SUBSCRIBED') {
+          try { mergeRecentBusts(await backend.recentBusts(60)); } catch {}
+        }
+      }
+    }); return unsub; },[mergeRecentBusts, refresh, user.id]);
   useEffect(()=>{ if(locked&&!muted){ const h=sfx.play('drip',{loop:true,volume:.22}); const t=setTimeout(()=>h.stop(),60000); return()=>{ clearTimeout(t); h.stop(); }; } },[locked,muted]);
   async function collectContext(){ let lat=null,long=null,temp_f=null,pressure=null,city=null,elevation_ft=null,tide_ft=null; try{ const cached=JSON.parse(localStorage.getItem('bust_geo')||'null'); const pos=cached && Date.now()-cached.at<86400000 ? cached : await new Promise((res,rej)=>navigator.geolocation.getCurrentPosition(p=>res({lat:p.coords.latitude,long:p.coords.longitude,altitude:p.coords.altitude,at:Date.now()}),rej,{timeout:6000})); localStorage.setItem('bust_geo',JSON.stringify(pos)); lat=pos.lat; long=pos.long; const w=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${long}&current=temperature_2m,surface_pressure&temperature_unit=fahrenheit`).then(r=>r.json()); temp_f=w.current?.temperature_2m ?? null; pressure=w.current?.surface_pressure ?? null; if(w.elevation!=null&&Number.isFinite(Number(w.elevation))) elevation_ft=Math.round(Number(w.elevation)*3.28084); else if(pos.altitude!=null&&Number.isFinite(Number(pos.altitude))) elevation_ft=Math.round(Number(pos.altitude)*3.28084); try{ const g=await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${long}&localityLanguage=en`).then(r=>r.json()); city=g.city||g.locality||g.principalSubdivision||null; }catch{} try{ tide_ft=await fetchTideFt(lat,long); }catch{} }catch{} return {lat,long,temp_f,pressure,city,elevation_ft,tide_ft}; }
   async function startBust(){ if(locked || phase!=='idle') return; navigator.vibrate?.([35,45,70,65,100]); setPhase('charge'); chargeSfx.current=sfx.play('charge',{loop:true,volume:.75}); const ctx=await collectContext(); setPendingCtx(ctx); setTimeout(()=>{navigator.vibrate?.([180,60,220,80,300]); chargeSfx.current?.stop(); sfx.play('explosion',{volume:.9}); setPhase('explode');},1400); setTimeout(()=>commitBust(ctx),5900); }
   async function commitBust(ctx=pendingCtx){ try{ const bust=await backend.bust({...ctx,note:''}); const current=[bust,...bustRef.current]; setBusts(prev=>[bust,...prev.filter(b=>b.id!==bust.id)]);
       // Compute ALL earned achievements — no presentation cap — then persist.
-      const allNew=computeAchievementUnlocks(bust.user_id,current,unlocks,{createdAt:user.created_at,userCount:users.length});
+      const allNew=computeAchievementUnlocks(bust.user_id,current,unlocksRef.current,{createdAt:user.created_at,userCount:usersRef.current.length});
       await persistAndShowUnlocks(allNew);
       setUser({...user,last_bust_timestamp:bust.timestamp}); setSelected(bust); }catch(e){ alert(e.message); }
     setPendingCtx(null); setPhase('idle'); }
   async function saveBustNote(bust,noteText){ const updated=await backend.patchBustNote(bust.id,noteText); const current=[updated,...bustRef.current.filter(b=>b.id!==updated.id)]; setBusts(current); setSelected(prev=>prev?.id===updated.id?{...prev,...updated}:prev);
-    const allNew=computeAchievementUnlocks(updated.user_id,current,unlocks,{createdAt:user.created_at,userCount:users.length});
+    const allNew=computeAchievementUnlocks(updated.user_id,current,unlocksRef.current,{createdAt:user.created_at,userCount:usersRef.current.length});
     await persistAndShowUnlocks(allNew);
     return updated; }
   const effectiveBusts=useMemo(()=>[...debugBusts,...busts],[debugBusts,busts]);
@@ -250,9 +283,9 @@ const recordEmoji={Crown:'👑',Snowflake:'❄️',Gauge:'📈',AlarmClock:'⏰'
 function RecordIcon({name}){ return <span className="record-emoji" aria-hidden="true">{recordEmoji[name]||'🏆'}</span> }
 function BadgeIcon({name}){ return <MIcon name={matMap[name]||name||'shield'}/> }
 function BadgeMedal({icon,accent,tier}){ const url=tier?tierUrl(tier):null; return <div className={`badge-medal${url?` tier-plated`:''}`} style={{'--badge':accent,...(url?{backgroundImage:`url(${url})`}:{})}}><BadgeIcon name={icon}/></div> }
-function BadgeToast({badge}){ if(!badge) return null; return <motion.div className="badge-toast mf-frame" initial={{opacity:0,y:-22,scale:.92}} animate={{opacity:1,y:0,scale:1}} exit={{opacity:0,y:-22}}><BadgeMedal icon={badge.micon||badge.icon} accent={badge.accent} tier={badge.tier}/><div><span>{badge.isRestored?'ACHIEVEMENT RESTORED':'ACHIEVEMENT UNLOCKED'}</span><h2>{badge.name}</h2><p>{badge.tier.toUpperCase()} · {badge.points} XP</p></div></motion.div> }
+function BadgeToast({badge}){ if(!badge) return null; return <motion.div className="badge-toast mf-frame" initial={{opacity:0,y:-22,scale:.92}} animate={{opacity:1,y:0,scale:1}} exit={{opacity:0,y:-22}}><BadgeMedal icon={badge.micon||badge.icon} accent={badge.accent} tier={badge.tier}/><div><span>{badge.isRestorationSummary?'HISTORICAL RECONCILIATION':badge.isRestored?'ACHIEVEMENT RESTORED':'ACHIEVEMENT UNLOCKED'}</span><h2>{badge.isRestorationSummary?`${badge.restoredCount} historical achievements restored`:badge.name}</h2><p>{badge.isRestorationSummary?'View your Trophy Cabinet to inspect restored unlocks.':`${badge.tier.toUpperCase()} · ${badge.points} XP`}</p></div></motion.div> }
 function Overlay({title,onClose,children,showScrollTop=false}){ const ref=useRef(null); return <motion.section ref={ref} className="overlay" initial={{y:'100%'}} animate={{y:0}} exit={{y:'100%'}}><button className="close" onClick={onClose}><X/></button><div className="overlay-head"><h1>{title}</h1></div>{children}{showScrollTop&&<button type="button" className="scroll-top" aria-label="Back to top" title="Back to top" onClick={()=>ref.current?.scrollTo({top:0,behavior:'smooth'})}><ChevronUp/></button>}</motion.section> }
-function Detail({bust,all,currentUserId,onSaveNote,onClose,mythicIds}){ const [editing,setEditing]=useState(false); const own=bust.user_id===currentUserId; return <motion.div className="detail-back" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}><div className="detail mf-frame"><button className="detail-close" onClick={onClose} aria-label="Close detail"><X/></button><img src={avatar(bust.avatar_seed)}/><h2><span className={mythicIds?.has(bust.user_id)?'rank-mythic':''}>{bust.username}</span><NameBadges userId={bust.user_id}/></h2><p>{fmt(bust.timestamp)} · {bust.time_bucket}</p>{bust.note?<blockquote>{bust.note}</blockquote>:<p className="detail-empty-note">No field note yet.</p>}{own&&<button type="button" className="mf-button ghost add-note-btn" onClick={()=>setEditing(true)}><Pencil/> Add Note</button>}<div className="metric-grid"><Metric icon={<Thermometer/>} label="TEMP" value={bust.temp_f?`${Math.round(bust.temp_f)}°F`:'—'}/><Metric icon={<Gauge/>} label="PRESSURE" value={pressureLabel(bust.pressure)||'—'} sub={bust.pressure?`${Math.round(bust.pressure)} hPa`:null}/><Metric icon={<Waves/>} label="TIDE" value={tideLabel(bust.tide_ft)}/><Metric icon={<MapPin/>} label="LOCATION" value={bust.city||'Unknown'}/><Metric icon={<Mountain/>} label="ALTITUDE" value={elevationLabel(bust.elevation_ft)}/><Metric icon={<Medal/>} label="DAY RANK" value={`#${rankForDay(bust,all)}`}/></div></div>{editing&&<NoteModal initial={bust.note||''} onClose={()=>setEditing(false)} onSave={note=>onSaveNote(bust,note)}/>}</motion.div> }
+function Detail({bust,all,currentUserId,onSaveNote,onClose,mythicIds}){ const [editing,setEditing]=useState(false); const own=bust.user_id===currentUserId; const temp=finiteNumber(bust.temp_f); const pressure=finiteNumber(bust.pressure); return <motion.div className="detail-back" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}><div className="detail mf-frame"><button className="detail-close" onClick={onClose} aria-label="Close detail"><X/></button><img src={avatar(bust.avatar_seed)}/><h2><span className={mythicIds?.has(bust.user_id)?'rank-mythic':''}>{bust.username}</span><NameBadges userId={bust.user_id}/></h2><p>{fmt(bust.timestamp)} · {bust.time_bucket}</p>{bust.note?<blockquote>{bust.note}</blockquote>:<p className="detail-empty-note">No field note yet.</p>}{own&&<button type="button" className="mf-button ghost add-note-btn" onClick={()=>setEditing(true)}><Pencil/> Add Note</button>}<div className="metric-grid"><Metric icon={<Thermometer/>} label="TEMP" value={temp!=null?`${Math.round(temp)}°F`:'—'}/><Metric icon={<Gauge/>} label="PRESSURE" value={pressureLabel(bust.pressure)||'—'} sub={pressure!=null?`${Math.round(pressure)} hPa`:null}/><Metric icon={<Waves/>} label="TIDE" value={tideLabel(bust.tide_ft)}/><Metric icon={<MapPin/>} label="LOCATION" value={bust.city||'Unknown'}/><Metric icon={<Mountain/>} label="ALTITUDE" value={elevationLabel(bust.elevation_ft)}/><Metric icon={<Medal/>} label="DAY RANK" value={`#${rankForDay(bust,all)}`}/></div></div>{editing&&<NoteModal initial={bust.note||''} onClose={()=>setEditing(false)} onSave={note=>onSaveNote(bust,note)}/>}</motion.div> }
 function Metric({icon,label,value,sub}){return <div className="metric">{icon}<small>{label}</small><strong>{value}</strong>{sub&&<em className="metric-sub">{sub}</em>}</div>}
 /** Location + notification permission re-request controls (profile). Browsers only re-prompt when state is 'prompt'; DENIED requires the browser's site settings. */
 function PermissionControls(){
@@ -353,7 +386,7 @@ function TrophyCabinet({unlocks,busts,user}){
 function EmptyState({text}){ return <div className="empty-state"><Sparkles/><span>{text}</span></div> }
 function Toasts({toasts,setToasts,onOpen,mythicIds}){ return <div className="toasts">{toasts.map(t=><div className="toast mf-frame" key={t.id} onClick={()=>onOpen(t.bust)}><button onClick={(e)=>{e.stopPropagation();setToasts(x=>x.filter(y=>y.id!==t.id))}}>×</button><b><span className={mythicIds?.has(t.bust.user_id)?'rank-mythic':''}>{t.bust.username}</span> BUSTED</b><span>{t.bust.note||'Open detail card.'}</span></div>)}</div> }
 function overlayTitle(o){return {profile:'OPERATOR PROFILE',alerts:'ALERT FEED',analytics:'ANALYTICS DRAWER',trophy:'TROPHY CABINET'}[o]}
-function buildAnalytics(busts,users,user,unlocks=[],debugXp=0){ const xpFor=id=>(id===user.id&&debugXp)?debugXp:unlocks.filter(a=>a.user_id===id).map(a=>achievements.find(x=>x.id===a.achievement_type)?.points||0).reduce((s,p)=>s+p,0); const counts=users.map(u=>({...u,count:busts.filter(b=>b.user_id===u.id).length,lvl:levelForXp(xpFor(u.id))})).sort((a,b)=>b.count-a.count); const today=busts.filter(b=>todayKey(b.timestamp)===todayKey()).length; const rank=counts.findIndex(u=>u.id===user.id)+1; const stats=[{label:'GROUP BUSTS',value:busts.length,hint:'all-time ledger'},{label:'ACTIVE PLAYERS',value:users.length,hint:'registered operators'},{label:'TODAY',value:today,hint:'current local day'},{label:'YOUR RANK',value:rank>0?'#'+rank:'—',hint:'daily pressure index'}]; const week=Array.from({length:7}).map((_,i)=>{const d=new Date();d.setDate(d.getDate()-(6-i));return {label:d.toLocaleDateString([],{weekday:'short'}),count:busts.filter(b=>new Date(b.timestamp).toDateString()===d.toDateString()).length}}); const heat=Array.from({length:24*7},(_,i)=>busts.filter(b=>new Date(b.timestamp).getDay()*24+new Date(b.timestamp).getHours()===i).length); const temps=busts.filter(b=>b.temp_f&&b.pressure); const scatterPts=temps.map(b=>({x:Number(b.temp_f),y:Number(b.pressure),label:`${b.username||'?'} — ${Math.round(b.temp_f)}°F, ${Math.round(b.pressure)} hPa`})); const records=deriveAllTimeRecords(busts);
+function buildAnalytics(busts,users,user,unlocks=[],debugXp=0){ const xpFor=id=>(id===user.id&&debugXp)?debugXp:unlocks.filter(a=>a.user_id===id).map(a=>achievements.find(x=>x.id===a.achievement_type)?.points||0).reduce((s,p)=>s+p,0); const counts=users.map(u=>({...u,count:busts.filter(b=>b.user_id===u.id).length,lvl:levelForXp(xpFor(u.id))})).sort((a,b)=>b.count-a.count); const today=busts.filter(b=>todayKey(b.timestamp)===todayKey()).length; const rank=counts.findIndex(u=>u.id===user.id)+1; const stats=[{label:'GROUP BUSTS',value:busts.length,hint:'all-time ledger'},{label:'ACTIVE PLAYERS',value:users.length,hint:'registered operators'},{label:'TODAY',value:today,hint:'current local day'},{label:'YOUR RANK',value:rank>0?'#'+rank:'—',hint:'daily pressure index'}]; const week=Array.from({length:7}).map((_,i)=>{const d=new Date();d.setDate(d.getDate()-(6-i));return {label:d.toLocaleDateString([],{weekday:'short'}),count:busts.filter(b=>new Date(b.timestamp).toDateString()===d.toDateString()).length}}); const heat=Array.from({length:24*7},(_,i)=>busts.filter(b=>new Date(b.timestamp).getDay()*24+new Date(b.timestamp).getHours()===i).length); const temps=busts.map(b=>({b,temp:finiteNumber(b.temp_f),pressure:finiteNumber(b.pressure)})).filter(x=>x.temp!=null&&x.pressure!=null); const scatterPts=temps.map(({b,temp,pressure})=>({x:temp,y:pressure,label:`${b.username||'?'} — ${Math.round(temp)}°F, ${Math.round(pressure)} hPa`})); const records=deriveAllTimeRecords(busts);
  const trend=buildTrend(busts,30);
  const buckets={}; busts.forEach(b=>{const k=b.time_bucket||timeBucket(b.timestamp);buckets[k]=(buckets[k]||0)+1;});
  const hourHist=Array.from({length:24},(_,h)=>busts.filter(b=>new Date(b.timestamp).getHours()===h).length);

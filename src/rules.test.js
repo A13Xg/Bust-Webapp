@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { achievements, capUnlocksPerBust, progressionCatalog, timeBucket, twoHoursRemainingMs, computeAchievementUnlocks, computeProgressionUnlocks, deriveProgressionSummary, deriveAllTimeRecords, deriveStreaks, levelForXp, derivePersonalStats, buildTrend, todayKey } from './rules.js';
+import { achievements, capUnlocksPerBust, progressionCatalog, timeBucket, twoHoursRemainingMs, computeAchievementUnlocks, computeProgressionUnlocks, deriveProgressionSummary, deriveAllTimeRecords, deriveStreaks, finiteNumber, levelForXp, derivePersonalStats, buildTrend, todayKey } from './rules.js';
 
 describe('BUST rules', () => {
   it('labels time-of-day buckets', () => {
@@ -17,6 +17,53 @@ describe('BUST rules', () => {
   it('unlocks first bust, environmental, note, and coordinate achievements', () => {
     const bust = { user_id: 'u1', timestamp: new Date(2026, 0, 1, 6).toISOString(), temp_f: 91, pressure: 1025, note: 'a very detailed field report from the bay', lat: 1, long: 2 };
     expect(computeAchievementUnlocks('u1', [bust], [])).toEqual(expect.arrayContaining(['first_release','early_bird','heat_seeker','high_pressure','field_reporter','cartographer']));
+  });
+
+  it('parses only finite numeric values for achievements', () => {
+    expect(finiteNumber(null)).toBeNull();
+    expect(finiteNumber(undefined)).toBeNull();
+    expect(finiteNumber('')).toBeNull();
+    expect(finiteNumber('abc')).toBeNull();
+    expect(finiteNumber(Number.NaN)).toBeNull();
+    expect(finiteNumber(Number.POSITIVE_INFINITY)).toBeNull();
+    expect(finiteNumber(0)).toBe(0);
+    expect(finiteNumber(-12.5)).toBe(-12.5);
+  });
+
+  it('does not unlock numeric achievements from null or malformed values', () => {
+    const bust = {
+      user_id: 'u1',
+      timestamp: new Date(2026, 0, 1, 6).toISOString(),
+      temp_f: null,
+      pressure: 'bad',
+      elevation_ft: undefined,
+      lat: '',
+      long: 'north'
+    };
+    const unlocks = computeAchievementUnlocks('u1', [bust], []);
+    expect(unlocks).not.toContain('cold_front');
+    expect(unlocks).not.toContain('heat_seeker');
+    expect(unlocks).not.toContain('high_pressure');
+    expect(unlocks).not.toContain('cartographer');
+  });
+
+  it('handles zero and negative numeric values safely', () => {
+    const bust = {
+      id: 'b-zero',
+      user_id: 'u1',
+      timestamp: new Date(2026, 0, 1, 2).toISOString(),
+      temp_f: 0,
+      pressure: 980,
+      elevation_ft: -10,
+      tide_ft: -2.4,
+      lat: 0,
+      long: 0
+    };
+    const unlocks = computeAchievementUnlocks('u1', [bust], []);
+    expect(unlocks).toContain('cartographer');
+    expect(unlocks).toContain('cold_front');
+    expect(unlocks).toContain('storm_chaser');
+    expect(unlocks).toContain('sea_level_scout');
   });
 
   it('defines a staged achievement to badge to trophy catalog', () => {
@@ -313,6 +360,20 @@ describe('BUST rules', () => {
       expect(unlocks.length).toBeGreaterThan(3);
       expect(unlocks).toContain('first_release');
       expect(unlocks).toContain('early_bird');
+    });
+
+    it('uses full history beyond previous dashboard/history caps', () => {
+      const total = 1205;
+      const busts = Array.from({ length: total }, (_, i) => ({
+        user_id: 'u1',
+        timestamp: new Date(2026, 0, 1 + i, 14).toISOString(),
+        temp_f: 70,
+        pressure: 1005
+      }));
+      busts[0] = { ...busts[0], timestamp: new Date(2026, 0, 1, 2).toISOString() };
+      const unlocks = computeAchievementUnlocks('u1', busts, []);
+      expect(unlocks).toContain('night_ops');
+      expect(unlocks).toContain('marathon_trophy');
     });
   });
 

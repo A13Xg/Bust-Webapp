@@ -13,8 +13,6 @@ const { query, withTransaction } = await import('./db.js');
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 async function registerUser(username = 'tester') {
-  const { randomUUID } = await import('crypto');
-  const id = randomUUID();
   // Directly insert via query to simulate registration
   const res = await query(
     'INSERT INTO users (username, synthetic_email, password_hash, avatar_seed) VALUES ($1,$2,$3,$4) RETURNING *',
@@ -72,6 +70,23 @@ describe('in-memory cooldown enforcement', () => {
       return client.query('SELECT id FROM users WHERE id=$1', [user.id]);
     });
     expect(result.rows[0].id).toBe(user.id);
+  });
+
+  it('serializes concurrent in-memory transactions for cooldown checks', async () => {
+    const user = await registerUser('ivan');
+    const attempt = () =>
+      withTransaction(async client => {
+        const ok = await client.query(
+          "SELECT id FROM users WHERE id=$1 AND (last_bust_timestamp IS NULL OR now() - last_bust_timestamp >= interval '2 hours') FOR UPDATE",
+          [user.id]
+        );
+        if (!ok.rows.length) return false;
+        await new Promise(resolve => setTimeout(resolve, 10));
+        await client.query('UPDATE users SET last_bust_timestamp=$1 WHERE id=$2', [new Date().toISOString(), user.id]);
+        return true;
+      });
+    const [a, b] = await Promise.all([attempt(), attempt()]);
+    expect([a, b].filter(Boolean)).toHaveLength(1);
   });
 });
 

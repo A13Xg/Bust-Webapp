@@ -5,6 +5,7 @@ import pg from 'pg';
 const { Pool } = pg;
 const useMemory = process.env.DEMO_DB === '1' || !process.env.DATABASE_URL;
 const state = { users: [], busts: [], achievements: [] };
+let memoryTxn = Promise.resolve();
 
 function sslConfig(connectionString) {
   const mode = (process.env.PGSSLMODE || '').toLowerCase();
@@ -137,7 +138,9 @@ export async function query(text, params) { return pool.query(text, params); }
  */
 export async function withTransaction(callback) {
   if (useMemory) {
-    return callback({ query: memoryQuery });
+    const run = memoryTxn.then(() => callback({ query: memoryQuery }));
+    memoryTxn = run.catch(() => {});
+    return run;
   }
   const client = await pool.connect();
   try {
