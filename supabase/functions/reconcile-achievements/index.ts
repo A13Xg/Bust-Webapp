@@ -1,11 +1,12 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { computeAchievementUnlocks } from '../../../src/rules.js';
+import { achievements, computeAchievementUnlocks } from '../../../src/rules.js';
 import { fetchAllPages } from '../../../src/fetchAllPages.js';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
+const validAchievementIds = new Set(achievements.map(item => item.id));
 
 Deno.serve(async req => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -57,7 +58,7 @@ Deno.serve(async req => {
     const earned = computeAchievementUnlocks(userId, busts, existing, {
       createdAt: profileResult.data.created_at,
       userCount: profiles.length,
-    });
+    }).filter(id => validAchievementIds.has(id));
 
     if (earned.length) {
       const { error } = await admin.from('achievements').upsert(
@@ -67,11 +68,11 @@ Deno.serve(async req => {
       if (error) throw new Error(error.message);
     }
 
-    const achievements = await fetchAllPages((from, to) =>
+    const achievementsRows = await fetchAllPages((from, to) =>
       admin.from('achievements').select('*').order('unlocked_at', { ascending: false }).range(from, to)
     );
 
-    return new Response(JSON.stringify({ achievements }), {
+    return new Response(JSON.stringify({ achievements: achievementsRows }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (error) {
