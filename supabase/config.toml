@@ -1,0 +1,2 @@
+[functions.reconcile-achievements]
+verify_jwt = true
