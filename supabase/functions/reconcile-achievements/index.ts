@@ -1,25 +1,11 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { computeAchievementUnlocks } from '../../../src/rules.js';
+import { fetchAllPages } from '../../../src/fetchAllPages.js';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
-
-const PAGE_SIZE = 1000;
-
-type QueryFactory<T> = (from: number, to: number) => Promise<{ data: T[] | null; error: { message: string } | null }>;
-
-async function fetchAll<T>(queryPage: QueryFactory<T>): Promise<T[]> {
-  const rows: T[] = [];
-  for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await queryPage(from, from + PAGE_SIZE - 1);
-    if (error) throw new Error(error.message);
-    const page = data ?? [];
-    rows.push(...page);
-    if (page.length < PAGE_SIZE) return rows;
-  }
-}
 
 Deno.serve(async req => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -61,9 +47,9 @@ Deno.serve(async req => {
 
     const [profileResult, busts, existing, profiles] = await Promise.all([
       admin.from('profiles').select('id, created_at').eq('id', userId).single(),
-      fetchAll((from, to) => admin.from('busts').select('*').order('timestamp', { ascending: true }).range(from, to)),
-      fetchAll((from, to) => admin.from('achievements').select('*').order('unlocked_at', { ascending: true }).range(from, to)),
-      fetchAll((from, to) => admin.from('profiles').select('id').order('created_at', { ascending: true }).range(from, to)),
+      fetchAllPages((from, to) => admin.from('busts').select('*').order('timestamp', { ascending: true }).range(from, to)),
+      fetchAllPages((from, to) => admin.from('achievements').select('*').order('unlocked_at', { ascending: true }).range(from, to)),
+      fetchAllPages((from, to) => admin.from('profiles').select('id').order('created_at', { ascending: true }).range(from, to)),
     ]);
 
     if (profileResult.error || !profileResult.data) throw new Error(profileResult.error?.message || 'Profile not found');
@@ -81,7 +67,7 @@ Deno.serve(async req => {
       if (error) throw new Error(error.message);
     }
 
-    const achievements = await fetchAll((from, to) =>
+    const achievements = await fetchAllPages((from, to) =>
       admin.from('achievements').select('*').order('unlocked_at', { ascending: false }).range(from, to)
     );
 
