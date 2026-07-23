@@ -77,6 +77,7 @@ function earnedIdSet(unlocks,userId){ return new Set(unlocks.filter(a=>a.user_id
 function earnedItems(unlocks,userId){ const set=earnedIdSet(unlocks,userId); return [...set].map(id=>achievements.find(x=>x.id===id)).filter(Boolean).sort((a,b)=>b.points-a.points); }
 function validShowcaseIds(showcase,earnedSet){ return String(showcase||'').split(',').filter(id=>earnedSet.has(id)).slice(0,3); }
 function NameBadges({userId}){ const ids=SHOWCASE_MAP[userId]||[]; if(!ids.length) return null; return <span className="name-badges">{ids.map(id=>{ const it=achievements.find(a=>a.id===id); return it?<i key={id} className={`name-badge tier-${it.tier}`} title={`${it.name} (${it.tier})`}><MIcon name={it.micon||matMap[it.icon]||'shield'}/></i>:null; })}</span> }
+function createRestorationSummaryBadge(count){ return { id:`restored-${Date.now()}-${count}`, name:`${count} historical achievements restored`, tier:'platinum', points:0, icon:'Sparkles', accent:'#95d5b2', isRestorationSummary:true, restoredCount:count }; }
 function progressGoal(item){ const text=`${item.desc||''} ${item.name||''}`; const n=text.match(/\b(\d[\d,]*)\b/); if(item.id==='xp_tycoon') return 2000; if(item.id==='the_collector') return 5; if(item.kind==='achievement'&&Number(item.goal||1)===1) return 1; if(/all five/i.test(text)) return 5; if(/all 7/i.test(text)) return 7; if(/everything else/i.test(text)) return achievements.length-1; return n?Number(n[1].replace(/,/g,'')):Number(item.goal)||1; }
 function itemProgress(item,busts=[],user,unlocks=[]){
   const own=busts.filter(b=>b.user_id===user.id).sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
@@ -153,6 +154,7 @@ function PermissionGate(){
       setGeo(g);
       setNotif(n);
       // sessionStorage flag guarantees the gate appears at most once per session.
+      // OKAY sets that flag and closes locally without forcing a page reload.
       const alreadyPrompted=sessionStorage.getItem('bust_perm_prompted')==='1';
       if(!alreadyPrompted && (g!=='granted' || (n!=='granted'&&n!=='unsupported'))) setShow(true);
     })(); return()=>{ alive=false; }; },[]);
@@ -194,7 +196,7 @@ function Dashboard({user,setUser}){ const [busts,setBusts]=useState([]),[users,s
   }, [user.id]);
   const enqueueRestoredSummary = useCallback((count) => {
     if (!count) return;
-    enqueueBadge([{ id: `restored-${Date.now()}-${count}`, name: `${count} historical achievements restored`, tier: 'platinum', points: 0, icon: 'Sparkles', accent: '#95d5b2', isRestorationSummary: true, restoredCount: count }]);
+    enqueueBadge([createRestorationSummaryBadge(count)]);
   }, [enqueueBadge]);
   // Persist all earned achievements (no presentation cap) and return newly saved IDs for display.
   const persistAndShowUnlocks = useCallback(async (allNew) => {

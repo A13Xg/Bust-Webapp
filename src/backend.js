@@ -10,6 +10,7 @@ import { timeBucket } from './rules.js';
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 export const isStatic = Boolean(SUPA_URL && SUPA_KEY);
+const RECONNECT_JITTER_MS = 700;
 
 /* ---------------------------------- server mode ---------------------------------- */
 const authHeaders = () => ({ 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('bust_token') || '') });
@@ -31,7 +32,8 @@ const serverBackend = {
   async patchBustNote(id, note) { return (await rest(`/bust/${encodeURIComponent(id)}/note`, { method: 'PATCH', body: JSON.stringify({ note }) })).bust; },
   async recentBusts(limit = 60) { return (await rest(`/busts/recent?limit=${encodeURIComponent(limit)}`)).busts; },
   async reconcileAchievements() { return await rest('/achievements/reconcile', { method: 'POST' }); },
-  async saveAchievements(types) { return (await this.reconcileAchievements(types)).achievements; },
+  // Legacy name retained for call-site compatibility; server path is authoritative reconcile.
+  async saveAchievements() { return (await this.reconcileAchievements()).achievements; },
   async patchProfile(patch) { return (await rest('/profile', { method: 'PATCH', body: JSON.stringify(patch) })).user; },
   subscribe({ onBust, onProfile, onStatus }) {
     // Auto-reconnecting WebSocket with exponential backoff + jitter (1s → 15s cap).
@@ -45,7 +47,7 @@ const serverBackend = {
     const scheduleReconnect = () => {
       clearReconnect();
       const base = delay = Math.min(delay * 2, 15000);
-      const jitter = Math.floor(Math.random() * 700);
+      const jitter = Math.floor(Math.random() * RECONNECT_JITTER_MS);
       reconnectTimer = setTimeout(connect, base + jitter);
     };
     const connect = () => {

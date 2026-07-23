@@ -15,6 +15,7 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 const PORT = process.env.PORT || 8787;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
 const NETWORK_CODES = new Set(['ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNRESET']);
+const routeRateWindow = new Map();
 
 app.use(cors());
 app.use(express.json({ limit: '64kb' }));
@@ -30,6 +31,22 @@ function dbErrorResponse(res, e) {
   return res.status(500).json({ error: `Database error${e.code ? ` (${e.code})` : ''}: ${e.message}` });
 }
 async function auth(req, res, next) { try { const raw = (req.headers.authorization || '').replace(/^Bearer\s+/i, ''); if (!raw) throw new Error('missing'); const payload = jwt.verify(raw, JWT_SECRET); const { rows } = await query('select * from users where id=$1', [payload.id]); if (!rows[0]) throw new Error('missing user'); req.user = rows[0]; next(); } catch { res.status(401).json({ error: 'Authentication required' }); } }
+function perUserRateLimit({ keyPrefix, windowMs, max }) {
+  return (req, res, next) => {
+    const userId = req.user?.id;
+    if (!userId) return next();
+    const key = `${keyPrefix}:${userId}`;
+    const now = Date.now();
+    const entry = routeRateWindow.get(key);
+    if (!entry || now - entry.startedAt > windowMs) {
+      routeRateWindow.set(key, { startedAt: now, count: 1 });
+      return next();
+    }
+    if (entry.count >= max) return res.status(429).json({ error: 'Too many requests, slow down.' });
+    entry.count += 1;
+    return next();
+  };
+}
 async function bustRows(limit = 300) { const { rows } = await query(`select b.*, u.username, u.avatar_seed from busts b join users u on u.id=b.user_id order by b.timestamp desc limit $1`, [limit]); return rows; }
 
 app.get('/api/health', async (req, res) => {
@@ -82,7 +99,7 @@ app.get('/api/busts/recent', auth, async (req, res) => {
     res.json({ busts });
   } catch (e) { dbErrorResponse(res, e); }
 });
-app.post('/api/bust', auth, async (req, res) => {
+app.post('/api/bust', auth, perUserRateLimit({ keyPrefix: 'bust', windowMs: 30_000, max: 8 }), async (req, res) => {
   try {
     const now = new Date();
     const { note = '', temp_f = null, pressure = null, lat = null, long = null, city = null, elevation_ft = null, tide_ft = null } = req.body || {};
@@ -170,13 +187,13 @@ async function reconcileAchievements(req, res) {
     res.json({ achievements: rows });
   } catch (e) { dbErrorResponse(res, e); }
 }
-app.post('/api/achievements/reconcile', auth, reconcileAchievements);
-app.post('/api/achievements', auth, reconcileAchievements);
+app.post('/api/achievements/reconcile', auth, perUserRateLimit({ keyPrefix: 'ach-reconcile', windowMs: 10_000, max: 6 }), reconcileAchievements);
+app.post('/api/achievements', auth, perUserRateLimit({ keyPrefix: 'ach-legacy', windowMs: 10_000, max: 6 }), reconcileAchievements);
 
 function broadcast(obj) { const data = JSON.stringify(obj); for (const client of wss.clients) if (client.readyState === 1) client.send(data); }
 wss.on('connection', (ws, req) => { try { const token = new URL(req.url, 'http://localhost').searchParams.get('token'); jwt.verify(token, JWT_SECRET); ws.send(JSON.stringify({ type: 'hello' })); } catch { ws.close(); } });
 
-app.use((err, req, res, next) => {
+app.use((err, req, res, _next) => {
   console.error(err);
   if (NETWORK_CODES.has(err?.code)) return res.status(503).json({ error: 'Database is unreachable; check DATABASE_URL or network/DNS access' });
   res.status(500).json({ error: 'Internal server error' });
