@@ -125,7 +125,7 @@ function progressFor(trackId, own) {
       const timestamps = own.map(b => new Date(b.timestamp).getTime());
       let left = 0;
       for (let right = 0; right < timestamps.length; right++) {
-        while (timestamps[right] - timestamps[left] >= MS_WEEK) left++;
+        while (timestamps[right] - timestamps[left] > MS_WEEK) left++;
         maxWindow = Math.max(maxWindow, right - left + 1);
       }
       return Math.max(maxDay, maxWindow);
