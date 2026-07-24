@@ -4,11 +4,13 @@ import {
   FIRST_REMINDER_DELAY_MS,
   MIN_REMINDER_INTERVAL_MS,
   REMINDER_WINDOW_MS,
+  INACTIVITY_MESSAGE_CATALOG,
   inactivityReminderStorageKey,
   isInactivityReminderDue,
   loadInactivityReminderState,
   markInactivityReminderSent,
   nextInactivityReminderDelayMs,
+  pickInactivityReminderMessage,
   reconcileInactivityReminderState,
   saveInactivityReminderState,
 } from './inactivityReminder.js';
@@ -93,6 +95,7 @@ describe('inactivity reminder storage', () => {
       cycleBustAt: iso(Date.UTC(2026, 0, 1, 0, 0, 0)),
       lastSentAt: null,
       scheduledFor: iso(Date.UTC(2026, 0, 3, 4, 0, 0)),
+      lastMessageIndex: 2,
     };
 
     saveInactivityReminderState(storage, 'user-1', state);
@@ -106,5 +109,15 @@ describe('inactivity reminder storage', () => {
   it('uses short polling delay for due reminders and minute cadence otherwise', () => {
     expect(nextInactivityReminderDelayMs({ scheduledFor: iso(Date.now() - 1_000) }, Date.now())).toBe(1_000);
     expect(nextInactivityReminderDelayMs({ scheduledFor: iso(Date.now() + 10 * 60 * 1000) }, Date.now())).toBe(60_000);
+  });
+
+  it('avoids immediately repeating the previous reminder message', () => {
+    const previousIndex = INACTIVITY_MESSAGE_CATALOG.findIndex(item =>
+      item.text.includes('cooldown ended hours ago')
+    );
+    const selected = pickInactivityReminderMessage({ random: () => 0, lastMessageIndex: previousIndex });
+    expect(selected.index).not.toBe(previousIndex);
+    expect(typeof selected.text).toBe('string');
+    expect(selected.text.length).toBeGreaterThan(0);
   });
 });

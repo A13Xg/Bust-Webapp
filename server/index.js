@@ -175,6 +175,24 @@ async function reconcileAchievements(req, res) {
 }
 app.post('/api/achievements/reconcile', auth, perUserRateLimit({ keyPrefix: 'ach-reconcile', windowMs: 10_000, max: 6 }), reconcileAchievements);
 app.post('/api/achievements', auth, perUserRateLimit({ keyPrefix: 'ach-legacy', windowMs: 10_000, max: 6 }), reconcileAchievements);
+app.post('/api/push-subscriptions', auth, perUserRateLimit({ keyPrefix: 'push-subscribe', windowMs: 10_000, max: 10 }), async (req, res) => {
+  try {
+    const subscription = req.body?.subscription;
+    const endpoint = typeof subscription?.endpoint === 'string' ? subscription.endpoint : '';
+    const p256dh = typeof subscription?.keys?.p256dh === 'string' ? subscription.keys.p256dh : '';
+    const authKey = typeof subscription?.keys?.auth === 'string' ? subscription.keys.auth : '';
+    if (!endpoint || !p256dh || !authKey) return res.status(400).json({ error: 'Invalid push subscription payload' });
+    const userAgent = String(req.body?.userAgent || req.get('user-agent') || '').slice(0, 256) || null;
+    await query(
+      `insert into push_subscriptions (user_id, endpoint, p256dh, auth, user_agent, updated_at)
+       values ($1,$2,$3,$4,$5,now())
+       on conflict (user_id, endpoint)
+       do update set p256dh=excluded.p256dh, auth=excluded.auth, user_agent=excluded.user_agent, updated_at=now()`,
+      [req.user.id, endpoint, p256dh, authKey, userAgent]
+    );
+    res.json({ ok: true });
+  } catch (e) { dbErrorResponse(res, e); }
+});
 
 function broadcast(obj) {
   const data = JSON.stringify(obj);

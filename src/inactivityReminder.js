@@ -3,7 +3,7 @@ export const FIRST_REMINDER_DELAY_MS = 52 * HOUR_MS;
 export const REMINDER_WINDOW_MS = 24 * HOUR_MS;
 export const MIN_REMINDER_INTERVAL_MS = 24 * HOUR_MS;
 
-const MESSAGE_CATALOG = [
+export const INACTIVITY_MESSAGE_CATALOG = [
   { text: 'Your cooldown ended hours ago. At this point, the inactivity appears deliberate.', weight: 5 },
   { text: 'Impressive discipline. In all the wrong places.', weight: 4 },
   { text: 'The BUST button misses you more than it should.', weight: 4 },
@@ -49,6 +49,7 @@ export function loadInactivityReminderState(storage = globalThis.localStorage, u
       cycleBustAt: typeof parsed.cycleBustAt === 'string' ? parsed.cycleBustAt : null,
       scheduledFor: typeof parsed.scheduledFor === 'string' ? parsed.scheduledFor : null,
       lastSentAt: typeof parsed.lastSentAt === 'string' ? parsed.lastSentAt : null,
+      lastMessageIndex: Number.isInteger(parsed.lastMessageIndex) ? parsed.lastMessageIndex : null,
     };
   } catch {
     return null;
@@ -91,11 +92,13 @@ export function reconcileInactivityReminderState({ state, latestBustAt, now = Da
     cycleBustAt: isoAt(cycleBustMs),
     scheduledFor: null,
     lastSentAt: null,
+    lastMessageIndex: null,
   };
 
   if (state?.cycleBustAt === normalized.cycleBustAt) {
     normalized.scheduledFor = typeof state.scheduledFor === 'string' ? state.scheduledFor : null;
     normalized.lastSentAt = typeof state.lastSentAt === 'string' ? state.lastSentAt : null;
+    normalized.lastMessageIndex = Number.isInteger(state.lastMessageIndex) ? state.lastMessageIndex : null;
   }
 
   const lastSentMs = toEpochMs(normalized.lastSentAt);
@@ -136,17 +139,31 @@ export function nextInactivityReminderDelayMs(state, now = Date.now()) {
   return Math.max(1_000, Math.min(60_000, scheduledMs - now));
 }
 
-export function buildInactivityReminderMessage(random = Math.random) {
-  const totalWeight = MESSAGE_CATALOG.reduce((sum, entry) => sum + Math.max(1, Number(entry.weight) || 1), 0);
+function chooseWeightedMessageIndex(random = Math.random) {
+  const totalWeight = INACTIVITY_MESSAGE_CATALOG.reduce((sum, entry) => sum + Math.max(1, Number(entry.weight) || 1), 0);
   let ticket = Math.floor(random() * totalWeight);
-  for (const entry of MESSAGE_CATALOG) {
+  for (let index = 0; index < INACTIVITY_MESSAGE_CATALOG.length; index += 1) {
+    const entry = INACTIVITY_MESSAGE_CATALOG[index];
     ticket -= Math.max(1, Number(entry.weight) || 1);
-    if (ticket < 0) return entry.text;
+    if (ticket < 0) return index;
   }
-  return MESSAGE_CATALOG[MESSAGE_CATALOG.length - 1].text;
+  return INACTIVITY_MESSAGE_CATALOG.length - 1;
 }
 
-export function markInactivityReminderSent(state, { now = Date.now(), random = Math.random } = {}) {
+export function pickInactivityReminderMessage({ random = Math.random, lastMessageIndex = null } = {}) {
+  if (!INACTIVITY_MESSAGE_CATALOG.length) return { index: -1, text: 'Reminder: log a bust.' };
+  let index = chooseWeightedMessageIndex(random);
+  if (INACTIVITY_MESSAGE_CATALOG.length > 1 && Number.isInteger(lastMessageIndex) && index === lastMessageIndex) {
+    index = (index + 1 + Math.floor(random() * (INACTIVITY_MESSAGE_CATALOG.length - 1))) % INACTIVITY_MESSAGE_CATALOG.length;
+  }
+  return { index, text: INACTIVITY_MESSAGE_CATALOG[index]?.text || 'Reminder: log a bust.' };
+}
+
+export function buildInactivityReminderMessage(random = Math.random, lastMessageIndex = null) {
+  return pickInactivityReminderMessage({ random, lastMessageIndex }).text;
+}
+
+export function markInactivityReminderSent(state, { now = Date.now(), random = Math.random, messageIndex = null } = {}) {
   const cycleBustMs = toEpochMs(state?.cycleBustAt);
   if (cycleBustMs == null) return state || null;
   const [minMs, maxMs] = followupReminderWindow(now);
@@ -154,5 +171,6 @@ export function markInactivityReminderSent(state, { now = Date.now(), random = M
     cycleBustAt: isoAt(cycleBustMs),
     lastSentAt: isoAt(now),
     scheduledFor: scheduleInWindow(minMs, maxMs, random),
+    lastMessageIndex: Number.isInteger(messageIndex) ? messageIndex : null,
   };
 }

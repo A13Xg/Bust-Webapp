@@ -4,7 +4,7 @@ import pg from 'pg';
 
 const { Pool } = pg;
 const useMemory = process.env.DEMO_DB === '1' || !process.env.DATABASE_URL;
-const state = { users: [], busts: [], achievements: [] };
+const state = { users: [], busts: [], achievements: [], push_subscriptions: [] };
 let memoryTxn = Promise.resolve();
 
 function sslConfig(connectionString) {
@@ -28,7 +28,7 @@ function sslConfig(connectionString) {
 function normalize(sql) { return String(sql).replace(/\s+/g, ' ').trim().toLowerCase(); }
 function clone(row) { return row ? { ...row } : row; }
 function maybeNumber(value) { return value == null || value === '' ? null : Number(value); }
-function resetMemory() { state.users = []; state.busts = []; state.achievements = []; }
+function resetMemory() { state.users = []; state.busts = []; state.achievements = []; state.push_subscriptions = []; }
 function userPublicSort() { return [...state.users].sort((a, b) => new Date(a.created_at) - new Date(b.created_at)); }
 function bustJoined(row) { const user = state.users.find(u => u.id === row.user_id) || {}; return { ...row, username: user.username, avatar_seed: user.avatar_seed }; }
 
@@ -68,6 +68,7 @@ async function memoryQuery(text, params = []) {
     state.users = state.users.filter(u => u.id !== params[0]);
     state.busts = state.busts.filter(b => b.user_id !== params[0]);
     state.achievements = state.achievements.filter(a => a.user_id !== params[0]);
+    state.push_subscriptions = state.push_subscriptions.filter(s => s.user_id !== params[0]);
     return { rows: [] };
   }
 
@@ -122,6 +123,21 @@ async function memoryQuery(text, params = []) {
   }
   if (sql.startsWith('select * from achievements')) {
     return { rows: [...state.achievements].sort((a, b) => new Date(b.unlocked_at) - new Date(a.unlocked_at)).map(clone) };
+  }
+  if (sql.startsWith('insert into push_subscriptions')) {
+    const [user_id, endpoint, p256dh, auth, user_agent] = params;
+    const now = new Date().toISOString();
+    const existing = state.push_subscriptions.find(s => s.user_id === user_id && s.endpoint === endpoint);
+    if (existing) {
+      existing.p256dh = p256dh;
+      existing.auth = auth;
+      existing.user_agent = user_agent;
+      existing.updated_at = now;
+      return { rows: [clone(existing)] };
+    }
+    const row = { id: randomUUID(), user_id, endpoint, p256dh, auth, user_agent, created_at: now, updated_at: now };
+    state.push_subscriptions.push(row);
+    return { rows: [clone(row)] };
   }
 
   throw new Error(`Unsupported memory query: ${String(text).slice(0, 160)}`);

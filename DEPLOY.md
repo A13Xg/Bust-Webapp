@@ -6,11 +6,17 @@ The app has a built-in static mode: when `VITE_SUPABASE_URL` and `VITE_SUPABASE_
 
 One-time setup:
 
-1. **Supabase SQL** — open the SQL Editor in your Supabase project and run `supabase/setup.sql` (creates `profiles`/`busts`/`achievements` with RLS, the cooldown policy, and realtime).
+1. **Supabase SQL** — open the SQL Editor in your Supabase project and run `supabase/setup.sql`, then every file in `supabase/migrations/` in filename order.
 2. **Auth setting** — Dashboard → Authentication → Sign In / Up → turn **off** "Confirm email" (the app generates synthetic emails per the spec).
 3. **GitHub secrets** — repo Settings → Secrets and variables → Actions → add:
    - `VITE_SUPABASE_URL` — e.g. `https://hshcpohxpfzpbvepuapt.supabase.co`
    - `VITE_SUPABASE_ANON_KEY` — Dashboard → Settings → API → `anon` `public` key (safe to expose; RLS is the security boundary)
+   - `VITE_WEB_PUSH_PUBLIC_KEY` — VAPID public key used by PushManager subscription
+4. **Deploy Supabase functions**:
+   - `supabase functions deploy reconcile-achievements`
+   - `supabase functions deploy register-push-subscription`
+   - `supabase functions deploy dispatch-inactivity-reminders`
+   - Set function secrets: `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and optional `REMINDER_CRON_SECRET`
 4. **Enable Pages** — repo Settings → Pages → Source: **GitHub Actions**.
 5. Push to `main`/`master`. The included workflow (`.github/workflows/deploy.yml`) tests, builds, and deploys to `https://<you>.github.io/Bust-Webapp/`.
 

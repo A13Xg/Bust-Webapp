@@ -9,6 +9,7 @@ import { timeBucket } from './rules.js';
 
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const WEB_PUSH_PUBLIC_KEY = import.meta.env.VITE_WEB_PUSH_PUBLIC_KEY || '';
 export const isStatic = Boolean(SUPA_URL && SUPA_KEY);
 const RECONNECT_JITTER_MS = 700;
 
@@ -33,6 +34,10 @@ const serverBackend = {
   async recentBusts(limit = 60) { return (await rest(`/busts/recent?limit=${encodeURIComponent(limit)}`)).busts; },
   async reconcileAchievements() { return await rest('/achievements/reconcile', { method: 'POST' }); },
   async saveAchievements() { return (await this.reconcileAchievements()).achievements; },
+  async registerPushSubscription(subscription, meta = {}) {
+    return await rest('/push-subscriptions', { method: 'POST', body: JSON.stringify({ subscription, ...meta }) });
+  },
+  webPushPublicKey() { return WEB_PUSH_PUBLIC_KEY; },
   async patchProfile(patch) { return (await rest('/profile', { method: 'PATCH', body: JSON.stringify(patch) })).user; },
   subscribe({ onBust, onProfile, onStatus }) {
     let ws = null, closed = false, delay = 1000, reconnectTimer = null;
@@ -183,6 +188,17 @@ const staticBackend = {
     return { achievements: data.achievements };
   },
   async saveAchievements() { return (await this.reconcileAchievements()).achievements; },
+  async registerPushSubscription(subscription, meta = {}) {
+    if (!subscription) return { ok: false, reason: 'missing_subscription' };
+    const sb = await getSupa();
+    const { data, error } = await sb.functions.invoke('register-push-subscription', {
+      body: { subscription, ...meta },
+    });
+    if (error) throw new Error(error.message || 'Push subscription registration failed');
+    if (data?.error) throw new Error(data.error);
+    return data || { ok: true };
+  },
+  webPushPublicKey() { return WEB_PUSH_PUBLIC_KEY; },
   async patchProfile(patch) {
     const sb = await getSupa();
     const { data: { user } } = await sb.auth.getUser();

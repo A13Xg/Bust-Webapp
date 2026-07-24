@@ -12,11 +12,42 @@ import { backend } from './backend.js';
 import * as sfx from './audio.js';
 import tideStations from './tide-stations.json';
 import { ErrorBoundary } from './ErrorBoundary.jsx';
-import { closePermissionPrompt, getNotificationPermission, markSeenEvent, requestNotificationPermission, sendBrowserNotification } from './notifications.js';
-import { buildInactivityReminderMessage, isInactivityReminderDue, loadInactivityReminderState, markInactivityReminderSent, nextInactivityReminderDelayMs, reconcileInactivityReminderState, saveInactivityReminderState } from './inactivityReminder.js';
+import {
+  closePermissionPrompt,
+  getNotificationPermission,
+  markSeenEvent,
+  registerPushServiceWorker,
+  requestNotificationPermission,
+  sendBrowserNotification,
+  subscribeToWebPush,
+  supportsWebPush,
+} from './notifications.js';
+import {
+  isInactivityReminderDue,
+  loadInactivityReminderState,
+  markInactivityReminderSent,
+  nextInactivityReminderDelayMs,
+  pickInactivityReminderMessage,
+  reconcileInactivityReminderState,
+  saveInactivityReminderState,
+} from './inactivityReminder.js';
 import { useAchievementQueue } from './useAchievementQueue.js';
 
 export const asset = p => import.meta.env.BASE_URL + String(p).replace(/^\//, '');
+async function enablePushNotifications() {
+  const permission = await requestNotificationPermission();
+  if (permission !== 'granted') return permission;
+  if (!supportsWebPush()) return permission;
+  const registration = await registerPushServiceWorker(navigator, asset('sw.js'));
+  if (!registration) return permission;
+  const subscription = await subscribeToWebPush({
+    serviceWorkerRegistration: registration,
+    vapidPublicKey: backend.webPushPublicKey?.(),
+  });
+  if (!subscription) return permission;
+  await backend.registerPushSubscription?.(subscription, { userAgent: navigator.userAgent || null });
+  return permission;
+}
 function avatar(seed) { return `https://api.dicebear.com/9.x/identicon/svg?seed=${encodeURIComponent(seed || 'bust')}&backgroundColor=0a0a0b&rowColor=ff5e00,f5f0e8`; }
 function fmt(ts) { return new Date(ts).toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }); }
 function rankForDay(bust, busts) { const d = new Date(bust.timestamp).toDateString(); const list = busts.filter(b=>new Date(b.timestamp).toDateString()===d).sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp)); return list.findIndex(b=>b.id===bust.id)+1 || '—'; }
@@ -165,12 +196,13 @@ function PermissionGate(){
       p=>{ localStorage.setItem('bust_geo',JSON.stringify({lat:p.coords.latitude,long:p.coords.longitude,altitude:p.coords.altitude,at:Date.now()})); setGeo('granted'); },
       ()=>setGeo(g=>g==='granted'?g:'denied'),{timeout:20000});
   },[show]);
-  async function askNotifications(){ setNotif(await requestNotificationPermission()); }
+  async function askNotifications(){ setNotif(await enablePushNotifications()); }
   if(!show) return null;
   const lbl=v=>({granted:'ENABLED',denied:'BLOCKED',default:'WAITING…',prompt:'NOT YET',checking:'…',unsupported:'N/A'}[v]||v);
   return createPortal(<div className="ach-detail-back"><div className="picker-box confirm-box mf-frame">
     <h2>Enable Permissions</h2>
     <p className="showcase-hint">BUST stamps each event with your location + weather and pings you when the crew fires.</p>
+    <p className="showcase-hint" style={{marginTop:0}}>Mobile push works best after installing this app to your home screen.</p>
     <div className="perm-status">
       <span className={geo==='granted'?'ok':''}><MapPin/> FIND MY LAIR · {lbl(geo)}</span>
       <span className={notif==='granted'?'ok':''}><Bell/> PING ME, COACH · {lbl(notif)}</span>
@@ -186,12 +218,13 @@ function Login({ onAuthed }) {
   return <main className="login-shell"><section className="auth-card mf-frame"><img className="login-logo" src={asset('bust-logo.png')} alt="BUST"/><p className="auth-copy">A real-time satirical pressure logging terminal for a trusted crew.</p><form onSubmit={submit}><label>Username<input value={form.username} onChange={e=>setForm({...form,username:e.target.value})} autoFocus /></label><label>Password<input type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} /></label>{mode==='signup'&&<label>Invite code<input value={form.inviteCode} onChange={e=>setForm({...form,inviteCode:e.target.value})} /></label>}<button className="mf-button" disabled={busy}>{busy?'TRANSMITTING…':mode==='login'?'ENTER BAY':'CREATE OPERATOR'}</button></form>{error&&<div className="error">{error}</div>}<button className="text-link" onClick={()=>setMode(mode==='login'?'signup':'login')}>{mode==='login'?'Need access? Bring the secret handshake.':'Already cleared? Login.'}</button></section></main>
 }
 
-function App(){ const [user,setUser]=useState(null); const [boot,setBoot]=useState(true); useEffect(()=>{backend.me().then(setUser).catch(()=>{}).finally(()=>setBoot(false))},[]); if(boot) return <div className="boot">UNPACKING BUST BAY…</div>; return user?<Dashboard user={user} setUser={setUser}/>:<Login onAuthed={setUser}/> }
+function App(){ const [user,setUser]=useState(null); const [boot,setBoot]=useState(true); useEffect(()=>{backend.me().then(setUser).catch(()=>{}).finally(()=>setBoot(false))},[]); useEffect(()=>{ if(!supportsWebPush()) return; void registerPushServiceWorker(navigator, asset('sw.js')); },[]); if(boot) return <div className="boot">UNPACKING BUST BAY…</div>; return user?<Dashboard user={user} setUser={setUser}/>:<Login onAuthed={setUser}/> }
 
 function Dashboard({user,setUser}){ const [busts,setBusts]=useState([]),[users,setUsers]=useState([]),[unlocks,setUnlocks]=useState([]); const [debugBusts,setDebugBusts]=useState([]),[debugUnlocks,setDebugUnlocks]=useState([]),[debugXp,setDebugXp]=useState(0); const [overlay,setOverlay]=useState(null),[selected,setSelected]=useState(null),[phase,setPhase]=useState('idle'),[pendingCtx,setPendingCtx]=useState(null),[toasts,setToasts]=useState([]),[unread,setUnread]=useState(0),[muted,setMuted]=useState(sfx.isMuted()); const bustRef=useRef([]); bustRef.current=busts; const unlocksRef=useRef([]); unlocksRef.current=unlocks; const usersRef=useRef([]); usersRef.current=users; const chargeSfx=useRef(null); const seenRealtimeEvents=useRef(new Set()); const [,tick]=useState(0);
   const { current: badgeToast, enqueue: enqueueBadge, dismiss: dismissBadge } = useAchievementQueue(5200);
   const remaining = twoHoursRemainingMs(user.last_bust_timestamp); const locked = remaining > 0 && phase==='idle';
   useEffect(() => {
+    if (supportsWebPush()) return;
     let closed = false;
     let reminderTimer = null;
     const run = async () => {
@@ -202,10 +235,11 @@ function Dashboard({user,setUser}){ const [busts,setBusts]=useState([]),[users,s
       if (!reconciled) { saveInactivityReminderState(localStorage, user.id, null); return; }
       let nextState = reconciled;
       if (isInactivityReminderDue(reconciled, user.last_bust_timestamp, now) && getNotificationPermission() === 'granted') {
-        const sent = await sendBrowserNotification('BUST Inactivity Reminder', { body: buildInactivityReminderMessage(), tag: `bust-inactivity-${user.id}` });
+        const chosen = pickInactivityReminderMessage({ lastMessageIndex: reconciled.lastMessageIndex });
+        const sent = await sendBrowserNotification('BUST Inactivity Reminder', { body: chosen.text, tag: `bust-inactivity-${user.id}` });
         if (sent) {
           const sentAt = Date.now();
-          nextState = markInactivityReminderSent(reconciled, { now: sentAt });
+          nextState = markInactivityReminderSent(reconciled, { now: sentAt, messageIndex: chosen.index });
         }
       }
       saveInactivityReminderState(localStorage, user.id, nextState);
@@ -325,7 +359,7 @@ function PermissionControls(){
     window.addEventListener('focus', syncNotif);
     return ()=>window.removeEventListener('focus', syncNotif);
   },[]);
-  async function askNotif(){ setNotif(await requestNotificationPermission()); }
+  async function askNotif(){ setNotif(await enablePushNotifications()); }
   function askGeo(){ if(!navigator.geolocation){ setGeo('unsupported'); return; } localStorage.removeItem('bust_geo'); navigator.geolocation.getCurrentPosition(
     p=>{ localStorage.setItem('bust_geo',JSON.stringify({lat:p.coords.latitude,long:p.coords.longitude,altitude:p.coords.altitude,at:Date.now()})); setGeo('granted'); },
     ()=>setGeo('denied'),{timeout:8000}); }
