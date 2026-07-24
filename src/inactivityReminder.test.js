@@ -45,6 +45,7 @@ describe('inactivity reminder scheduling', () => {
       cycleBustAt: iso(firstBustMs),
       lastSentAt: iso(firstBustMs + 60 * 60 * 1000),
       scheduledFor: iso(firstBustMs + 70 * 60 * 60 * 1000),
+      lastMessageIndex: 2,
     };
 
     const reconciled = reconcileInactivityReminderState({
@@ -58,6 +59,7 @@ describe('inactivity reminder scheduling', () => {
       cycleBustAt: iso(secondBustMs),
       lastSentAt: null,
       scheduledFor: iso(secondBustMs + FIRST_REMINDER_DELAY_MS),
+      lastMessageIndex: null,
     });
   });
 
