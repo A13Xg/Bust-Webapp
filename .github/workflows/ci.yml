@@ -46,7 +46,15 @@ jobs:
       - name: Prepare database schema
         run: npm run db:migrate
       - name: Unit tests
-        run: npm test
+        run: npm test -- --reporter=default --reporter=json --outputFile=test-results.json
+      - name: Upload unit test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: test-results.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Test coverage
         run: npm run test:coverage
       - name: Database connection check
