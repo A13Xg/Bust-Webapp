@@ -3,22 +3,17 @@ export const FIRST_REMINDER_DELAY_MS = 52 * HOUR_MS;
 export const REMINDER_WINDOW_MS = 24 * HOUR_MS;
 export const MIN_REMINDER_INTERVAL_MS = 24 * HOUR_MS;
 
-const MESSAGE_POOL = [
-  'Your cooldown ended hours ago. At this point, the inactivity appears deliberate.',
-  'Your cooldown ended hours ago. At this point, the inactivity appears deliberate.',
-  'Impressive discipline. In all the wrong places.',
-  'Impressive discipline. In all the wrong places.',
-  'The BUST button misses you more than it should.',
-  'The BUST button misses you more than it should.',
-  'Still no bust. Bold strategy for a pressure logger.',
-  'Still no bust. Bold strategy for a pressure logger.',
-  'Mission update: absolutely nothing has happened because of you.',
-  'Mission update: absolutely nothing has happened because of you.',
-  'You have achieved peak inactivity. Congratulations, I guess.',
-  'The crew is waiting. Your excuses are on schedule, at least.',
-  'Reminder: this app works better when you actually bust.',
-  'Your silence has been logged as tactical procrastination.',
-  'Your inactivity streak is becoming your strongest stat.',
+const MESSAGE_CATALOG = [
+  { text: 'Your cooldown ended hours ago. At this point, the inactivity appears deliberate.', weight: 5 },
+  { text: 'Impressive discipline. In all the wrong places.', weight: 4 },
+  { text: 'The BUST button misses you more than it should.', weight: 4 },
+  { text: 'Still no bust. Bold strategy for a pressure logger.', weight: 4 },
+  { text: 'Mission update: absolutely nothing has happened because of you.', weight: 4 },
+  { text: 'You have achieved peak inactivity. Congratulations, I guess.', weight: 2 },
+  { text: 'The crew is waiting. Your excuses are on schedule, at least.', weight: 2 },
+  { text: 'Reminder: this app works better when you actually bust.', weight: 2 },
+  { text: 'Your silence has been logged as tactical procrastination.', weight: 2 },
+  { text: 'Your inactivity streak is becoming your strongest stat.', weight: 2 },
 ];
 
 function toEpochMs(value) {
@@ -36,7 +31,7 @@ function randomBetween(min, max, random = Math.random) {
   const high = Math.max(min, max);
   const span = high - low;
   if (span <= 0) return low;
-  return low + Math.floor(random() * (span + 1));
+  return low + Math.round(random() * span);
 }
 
 export function inactivityReminderStorageKey(userId) {
@@ -142,8 +137,13 @@ export function nextInactivityReminderDelayMs(state, now = Date.now()) {
 }
 
 export function buildInactivityReminderMessage(random = Math.random) {
-  const idx = Math.floor(random() * MESSAGE_POOL.length);
-  return MESSAGE_POOL[Math.max(0, Math.min(MESSAGE_POOL.length - 1, idx))];
+  const totalWeight = MESSAGE_CATALOG.reduce((sum, entry) => sum + Math.max(1, Number(entry.weight) || 1), 0);
+  let ticket = Math.floor(random() * totalWeight);
+  for (const entry of MESSAGE_CATALOG) {
+    ticket -= Math.max(1, Number(entry.weight) || 1);
+    if (ticket < 0) return entry.text;
+  }
+  return MESSAGE_CATALOG[MESSAGE_CATALOG.length - 1].text;
 }
 
 export function markInactivityReminderSent(state, { now = Date.now(), random = Math.random } = {}) {

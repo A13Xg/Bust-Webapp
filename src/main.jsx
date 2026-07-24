@@ -193,7 +193,7 @@ function Dashboard({user,setUser}){ const [busts,setBusts]=useState([]),[users,s
   const remaining = twoHoursRemainingMs(user.last_bust_timestamp); const locked = remaining > 0 && phase==='idle';
   useEffect(() => {
     let closed = false;
-    let timer = null;
+    let reminderTimer = null;
     const run = async () => {
       if (closed || !user?.id) return;
       const now = Date.now();
@@ -202,14 +202,17 @@ function Dashboard({user,setUser}){ const [busts,setBusts]=useState([]),[users,s
       if (!reconciled) { saveInactivityReminderState(localStorage, user.id, null); return; }
       let nextState = reconciled;
       if (isInactivityReminderDue(reconciled, user.last_bust_timestamp, now) && getNotificationPermission() === 'granted') {
-        const sent = await sendBrowserNotification('BUST inactivity reminder', { body: buildInactivityReminderMessage(), tag: `bust-inactivity-${user.id}` });
-        if (sent) nextState = markInactivityReminderSent(reconciled, { now: Date.now() });
+        const sent = await sendBrowserNotification('BUST Inactivity Reminder', { body: buildInactivityReminderMessage(), tag: `bust-inactivity-${user.id}` });
+        if (sent) {
+          const sentAt = Date.now();
+          nextState = markInactivityReminderSent(reconciled, { now: sentAt });
+        }
       }
       saveInactivityReminderState(localStorage, user.id, nextState);
-      if (!closed) timer = setTimeout(run, nextInactivityReminderDelayMs(nextState, Date.now()));
+      if (!closed) reminderTimer = setTimeout(run, nextInactivityReminderDelayMs(nextState, Date.now()));
     };
     void run();
-    return () => { closed = true; if (timer) clearTimeout(timer); };
+    return () => { closed = true; if (reminderTimer) clearTimeout(reminderTimer); };
   }, [user.id, user.last_bust_timestamp]);
   useEffect(()=>{ if(remaining>0){ const t=setTimeout(()=>tick(x=>x+1), remaining+300); return()=>clearTimeout(t); } },[remaining]);
   const userAchievementSet = useCallback((rows) => {
@@ -262,7 +265,7 @@ function Dashboard({user,setUser}){ const [busts,setBusts]=useState([]),[users,s
         const stableEventId = `${eventType}:${bust.id}`;
         if (!markSeenEvent(seenRealtimeEvents.current, stableEventId)) return;
         setBusts(prev=>[bust,...prev.filter(b=>b.id!==bust.id)]); setSelected(prev=>prev?.id===bust.id?{...prev,...bust}:prev); setUsers(prev=>prev.map(u=>u.id===bust.user_id?{...u,last_bust_timestamp:bust.timestamp}:u));
-        if (eventType === 'created' && bust.user_id === user.id) setUser(prev => prev?.id === bust.user_id ? { ...prev, last_bust_timestamp: bust.timestamp } : prev);
+        if (eventType === 'created' && bust.user_id === user.id) setUser(prev => prev ? { ...prev, last_bust_timestamp: bust.timestamp } : prev);
         // Only show toast + increment unread for new busts from OTHER users; not for note edits.
         if(bust.user_id!==user.id && eventType==='created'){ setUnread(n=>n+1); setToasts(t=>[{id:crypto.randomUUID(),bust},...t]); void sendBrowserNotification(`${bust.username} logged a BUST`, { body: bust.note || 'Pressure event received.', tag: `bust-${bust.id}` }); }
       },

@@ -24,7 +24,7 @@ describe('inactivity reminder scheduling', () => {
     const first = reconcileInactivityReminderState({ latestBustAt: iso(bustMs), state: null, now, random: () => 0.5 });
     expect(first?.cycleBustAt).toBe(iso(bustMs));
     const firstScheduledMs = new Date(first.scheduledFor).getTime();
-    expect(firstScheduledMs).toBeGreaterThanOrEqual(now);
+    expect(firstScheduledMs).toBeGreaterThanOrEqual(bustMs + FIRST_REMINDER_DELAY_MS);
     expect(firstScheduledMs).toBeLessThanOrEqual(bustMs + FIRST_REMINDER_DELAY_MS + REMINDER_WINDOW_MS);
 
     const second = reconcileInactivityReminderState({
