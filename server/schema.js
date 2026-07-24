@@ -35,6 +35,18 @@ create table if not exists achievements (
   unlocked_at timestamptz not null default now(),
   unique(user_id, achievement_type)
 );
+create table if not exists push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references users(id) on delete cascade,
+  endpoint text not null,
+  p256dh text not null,
+  auth text not null,
+  user_agent text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(user_id, endpoint)
+);
 create index if not exists busts_timestamp_idx on busts(timestamp desc);
 create index if not exists busts_user_timestamp_idx on busts(user_id, timestamp desc);
+create index if not exists push_subscriptions_user_idx on push_subscriptions(user_id);
 `;

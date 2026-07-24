@@ -9,7 +9,9 @@ import { timeBucket } from './rules.js';
 
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const WEB_PUSH_PUBLIC_KEY = import.meta.env.VITE_WEB_PUSH_PUBLIC_KEY || '';
 export const isStatic = Boolean(SUPA_URL && SUPA_KEY);
+const RECONNECT_JITTER_MS = 700;
 
 /* ---------------------------------- server mode ---------------------------------- */
 const authHeaders = () => ({ 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('bust_token') || '') });
@@ -29,28 +31,53 @@ const serverBackend = {
   async dashboard() { return rest('/dashboard'); },
   async bust(payload) { return (await rest('/bust', { method: 'POST', body: JSON.stringify(payload) })).bust; },
   async patchBustNote(id, note) { return (await rest(`/bust/${encodeURIComponent(id)}/note`, { method: 'PATCH', body: JSON.stringify({ note }) })).bust; },
-  async saveAchievements(types) { return (await rest('/achievements', { method: 'POST', body: JSON.stringify({ types }) })).achievements; },
+  async recentBusts(limit = 60) { return (await rest(`/busts/recent?limit=${encodeURIComponent(limit)}`)).busts; },
+  async reconcileAchievements() { return await rest('/achievements/reconcile', { method: 'POST' }); },
+  async saveAchievements() { return (await this.reconcileAchievements()).achievements; },
+  async registerPushSubscription(subscription, meta = {}) {
+    return await rest('/push-subscriptions', { method: 'POST', body: JSON.stringify({ subscription, ...meta }) });
+  },
+  webPushPublicKey() { return WEB_PUSH_PUBLIC_KEY; },
   async patchProfile(patch) { return (await rest('/profile', { method: 'PATCH', body: JSON.stringify(patch) })).user; },
-  subscribe({ onBust, onProfile }) {
-    // Auto-reconnecting WebSocket with exponential backoff (1s → 15s cap).
-    let ws = null, closed = false, delay = 1000;
+  subscribe({ onBust, onProfile, onStatus }) {
+    let ws = null, closed = false, delay = 1000, reconnectTimer = null;
+    const clearReconnect = () => {
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+    };
+    const scheduleReconnect = () => {
+      clearReconnect();
+      const base = delay = Math.min(delay * 2, 15000);
+      const jitter = Math.floor(Math.random() * RECONNECT_JITTER_MS);
+      reconnectTimer = setTimeout(connect, base + jitter);
+    };
     const connect = () => {
       if (closed) return;
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       ws = new WebSocket(`${proto}://${location.host}/ws?token=${localStorage.getItem('bust_token')}`);
-      ws.onopen = () => { delay = 1000; };
+      ws.onopen = () => { clearReconnect(); delay = 1000; onStatus?.('SUBSCRIBED'); };
       ws.onmessage = e => {
         try {
           const msg = JSON.parse(e.data);
-          if (msg.type === 'bust') onBust?.(msg.bust);
-          if (msg.type === 'profile') onProfile?.(msg.user);
+          if (msg.type === 'bust' || msg.type === 'bust.created' || msg.type === 'bust.updated') {
+            onBust?.(msg.bust, msg.type === 'bust.updated' ? 'updated' : 'created');
+          }
+          if (msg.type === 'profile' || msg.type === 'profile.updated') onProfile?.(msg.user);
         } catch { /* ignore malformed frames */ }
       };
-      ws.onclose = () => { if (!closed) setTimeout(connect, delay = Math.min(delay * 2, 15000)); };
-      ws.onerror = () => { try { ws.close(); } catch {} };
+      ws.onclose = event => {
+        ws = null;
+        if (closed || event.code === 4001) { onStatus?.('CLOSED'); return; }
+        onStatus?.('TIMED_OUT');
+        scheduleReconnect();
+      };
+      ws.onerror = () => { onStatus?.('CHANNEL_ERROR'); try { ws.close(); } catch {} };
     };
     connect();
-    return () => { closed = true; try { ws?.close(); } catch {} };
+    return () => { closed = true; clearReconnect(); try { ws?.close(); } catch {} ws = null; onStatus?.('CLOSED'); };
   }
 };
 
@@ -107,8 +134,6 @@ const staticBackend = {
   },
   async logout() { const sb = await getSupa(); await sb.auth.signOut(); },
   async deleteAccount() {
-    // Anon key can't remove the auth.users row (needs service role) — deleting the
-    // profile cascades busts/achievements and frees the username, then we sign out.
     const sb = await getSupa();
     const { data: { user } } = await sb.auth.getUser();
     if (!user) throw new Error('Not signed in');
@@ -127,6 +152,13 @@ const staticBackend = {
     if (achievements.error) throw new Error(achievements.error.message);
     return { users: profiles.map(toUser), busts: busts.data.map(joinBust), achievements: achievements.data };
   },
+  async recentBusts(limit = 60) {
+    const sb = await getSupa();
+    const result = await sb.from('busts').select('*').order('timestamp', { ascending: false }).limit(Math.max(1, Math.min(200, Number(limit) || 60)));
+    if (result.error) throw new Error(result.error.message);
+    if (!profileCache.size) { try { await refreshProfiles(sb); } catch {} }
+    return result.data.map(joinBust);
+  },
   async bust(payload) {
     const sb = await getSupa();
     const { data: { user } } = await sb.auth.getUser();
@@ -134,7 +166,7 @@ const staticBackend = {
     const now = new Date();
     const row = { user_id: user.id, timestamp: now.toISOString(), note: String(payload.note || '').slice(0, 240), temp_f: payload.temp_f, pressure: payload.pressure, lat: payload.lat, long: payload.long, city: payload.city, elevation_ft: payload.elevation_ft, tide_ft: payload.tide_ft, time_bucket: timeBucket(now) };
     const { data, error } = await sb.from('busts').insert(row).select().single();
-    if (error) throw new Error(/policy|row-level/i.test(error.message) ? 'Cooldown is still active' : error.message);
+    if (error) throw new Error(/policy|row-level|cooldown/i.test(error.message) ? 'Cooldown is still active' : error.message);
     return joinBust(data);
   },
   async patchBustNote(id, note) {
@@ -145,19 +177,28 @@ const staticBackend = {
     if (error) throw new Error(error.message);
     return joinBust(data);
   },
-  async saveAchievements(types) {
+  async reconcileAchievements() {
     const sb = await getSupa();
     const { data: { user } } = await sb.auth.getUser();
     if (!user) throw new Error('Not signed in');
-    if (types.length) {
-      const rows = types.slice(0, 60).map(t => ({ user_id: user.id, achievement_type: t }));
-      const { error } = await sb.from('achievements').upsert(rows, { onConflict: 'user_id,achievement_type', ignoreDuplicates: true });
-      if (error) throw new Error(error.message);
-    }
-    const { data, error } = await sb.from('achievements').select('*').order('unlocked_at', { ascending: false });
-    if (error) throw new Error(error.message);
-    return data;
+    const { data, error } = await sb.functions.invoke('reconcile-achievements', { body: {} });
+    if (error) throw new Error(error.message || 'Achievement reconciliation failed');
+    if (data?.error) throw new Error(data.error);
+    if (!Array.isArray(data?.achievements)) throw new Error('Achievement reconciliation returned an invalid response');
+    return { achievements: data.achievements };
   },
+  async saveAchievements() { return (await this.reconcileAchievements()).achievements; },
+  async registerPushSubscription(subscription, meta = {}) {
+    if (!subscription) return { ok: false, reason: 'missing_subscription' };
+    const sb = await getSupa();
+    const { data, error } = await sb.functions.invoke('register-push-subscription', {
+      body: { subscription, ...meta },
+    });
+    if (error) throw new Error(error.message || 'Push subscription registration failed');
+    if (data?.error) throw new Error(data.error);
+    return data || { ok: true };
+  },
+  webPushPublicKey() { return WEB_PUSH_PUBLIC_KEY; },
   async patchProfile(patch) {
     const sb = await getSupa();
     const { data: { user } } = await sb.auth.getUser();
@@ -171,25 +212,33 @@ const staticBackend = {
     profileCache.set(data.id, data);
     return toUser(data);
   },
-  subscribe({ onBust, onProfile }) {
+  subscribe({ onBust, onProfile, onStatus }) {
     let channel;
+    let unsubscribed = false;
     getSupa().then(sb => {
+      if (unsubscribed) return;
       channel = sb.channel('bust-feed')
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'busts' }, async payload => {
           if (!profileCache.has(payload.new.user_id)) { try { await refreshProfiles(sb); } catch {} }
-          onBust?.(joinBust(payload.new));
+          onBust?.(joinBust(payload.new), 'created');
         })
         .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'busts' }, async payload => {
           if (!profileCache.has(payload.new.user_id)) { try { await refreshProfiles(sb); } catch {} }
-          onBust?.(joinBust(payload.new));
+          onBust?.(joinBust(payload.new), 'updated');
         })
         .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, payload => {
           profileCache.set(payload.new.id, payload.new);
           onProfile?.(toUser(payload.new));
         })
-        .subscribe();
+        .subscribe(status => {
+          if (unsubscribed) return;
+          if (status === 'SUBSCRIBED') onStatus?.('SUBSCRIBED');
+          else if (status === 'CHANNEL_ERROR') onStatus?.('CHANNEL_ERROR');
+          else if (status === 'TIMED_OUT') onStatus?.('TIMED_OUT');
+          else if (status === 'CLOSED') onStatus?.('CLOSED');
+        });
     });
-    return () => { channel?.unsubscribe(); };
+    return () => { unsubscribed = true; channel?.unsubscribe(); onStatus?.('CLOSED'); };
   }
 };
 
