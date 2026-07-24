@@ -11,6 +11,7 @@ const SHOW_DELAY_MS = 1400;
 let deferredInstallPrompt = null;
 let rendered = false;
 let showTimer = null;
+let escapeHandler = null;
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, character => ({
@@ -24,6 +25,10 @@ function escapeHtml(value) {
 
 function removePrompt({ dismissed = false } = {}) {
   if (dismissed) markInstallPromptDismissed();
+  if (escapeHandler) {
+    document.removeEventListener('keydown', escapeHandler);
+    escapeHandler = null;
+  }
   document.getElementById('bust-install-overlay')?.remove();
   document.getElementById('bust-install-styles')?.remove();
   rendered = false;
@@ -134,9 +139,10 @@ function renderPrompt() {
       overlay.querySelector('#bust-install-steps')
     );
   });
-  document.addEventListener('keydown', event => {
+  escapeHandler = event => {
     if (event.key === 'Escape' && document.getElementById('bust-install-overlay')) close();
-  }, { once: true });
+  };
+  document.addEventListener('keydown', escapeHandler);
 
   document.body.append(overlay);
   rendered = true;
