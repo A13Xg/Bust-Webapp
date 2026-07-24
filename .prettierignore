@@ -17,3 +17,7 @@ server/index.js
 server/migrate.js
 server/schema.js
 scripts/ci-db-check.mjs
+# Self-contained mobile install bootstrap and its deterministic helper tests
+src/installBootstrap.js
+src/pwaInstall.js
+src/pwaInstall.test.js
