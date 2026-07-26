@@ -90,6 +90,16 @@ export function timeBucket(input = new Date()) {
   return 'Prime Night';
 }
 
+export function finiteNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function hasFiniteCoordinates(bust) {
+  return finiteNumber(bust?.lat) != null && finiteNumber(bust?.long) != null;
+}
+
 function daypart(input) {
   const bucket = timeBucket(input);
   if (bucket === 'Early Morning' || bucket === 'Morning') return 'morning';
@@ -103,21 +113,33 @@ export function twoHoursRemainingMs(lastTimestamp, now = Date.now()) {
 }
 
 function progressFor(trackId, own) {
-  const latest = own[own.length - 1];
-  const latestDate = latest ? todayKey(latest.timestamp) : null;
-  const weekAgo = latest ? new Date(latest.timestamp).getTime() - 7*24*60*60*1000 : 0;
   const countWhere = (fn) => own.filter(fn).length;
   const unique = (fn) => new Set(own.map(fn).filter(Boolean)).size;
   switch (trackId) {
-    case 'scorcher': return countWhere(b => Number(b.temp_f) > 100);
+    case 'scorcher': return countWhere(b => finiteNumber(b.temp_f) != null && finiteNumber(b.temp_f) > 100);
     case 'daypart': return unique(b => daypart(b.timestamp));
     case 'marathon': return own.length;
     case 'weekend': return Math.max(unique(b => [0,6].includes(new Date(b.timestamp).getDay()) ? new Date(b.timestamp).getDay() : null), countWhere(b => [0,6].includes(new Date(b.timestamp).getDay())));
-    case 'pressure': return countWhere(b => Number(b.pressure) > 1020);
-    case 'cold': return countWhere(b => Number(b.temp_f) < 45);
+    case 'pressure': return countWhere(b => finiteNumber(b.pressure) != null && finiteNumber(b.pressure) > 1020);
+    case 'cold': return countWhere(b => finiteNumber(b.temp_f) != null && finiteNumber(b.temp_f) < 45);
     case 'scribe': return countWhere(b => (b.note || '').trim().length >= 30);
-    case 'cartographer': return countWhere(b => b.lat != null && b.long != null);
-    case 'streak': return Math.max(countWhere(b => latestDate && todayKey(b.timestamp) === latestDate), countWhere(b => new Date(b.timestamp).getTime() >= weekAgo));
+    case 'cartographer': return countWhere(hasFiniteCoordinates);
+    case 'streak': {
+      // Max busts on any single local day (for Double Shift, goal=2)
+      const dayCounts = {};
+      own.forEach(b => { const k = todayKey(b.timestamp); dayCounts[k] = (dayCounts[k] || 0) + 1; });
+      const maxDay = Math.max(0, ...Object.values(dayCounts));
+      // Max busts in any rolling 7-day window — O(n) two-pointer sliding window.
+      let maxWindow = 0;
+      const MS_WEEK = 7 * 24 * 60 * 60 * 1000;
+      const timestamps = own.map(b => new Date(b.timestamp).getTime());
+      let left = 0;
+      for (let right = 0; right < timestamps.length; right++) {
+        while (timestamps[right] - timestamps[left] > MS_WEEK) left++;
+        maxWindow = Math.max(maxWindow, right - left + 1);
+      }
+      return Math.max(maxDay, maxWindow);
+    }
     case 'night': return countWhere(b => timeBucket(b.timestamp) === 'Late Night');
     default: return 0;
   }
@@ -139,24 +161,38 @@ export function computeProgressionUnlocks(userId, busts, existing = []) {
 
 export function computeAchievementUnlocks(userId, busts, existing = [], opts = {}) {
   const own = busts.filter(b => b.user_id === userId).sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
-  const latest = own[own.length - 1];
-  if (!latest) return [];
+  if (!own.length) return [];
   const already = alreadyUnlocked(existing, userId);
   const add = (id, condition) => condition && !already.has(id) ? id : null;
-  const latestDate = todayKey(latest.timestamp);
-  const weekAgo = new Date(latest.timestamp).getTime() - 7*24*60*60*1000;
+  // Max busts on any single local day (for double_shift)
+  const dayCounts = {};
+  own.forEach(b => { const k = todayKey(b.timestamp); dayCounts[k] = (dayCounts[k] || 0) + 1; });
+  const maxDay = Math.max(0, ...Object.values(dayCounts));
+  // Max busts in any rolling 7-day window — O(n) two-pointer sliding window.
+  const MS_WEEK = 7 * 24 * 60 * 60 * 1000;
+  let maxWeek = 0;
+  const ownTs = own.map(b => new Date(b.timestamp).getTime());
+  let left = 0;
+  for (let right = 0; right < ownTs.length; right++) {
+    while (ownTs[right] - ownTs[left] > MS_WEEK) left++;
+    maxWeek = Math.max(maxWeek, right - left + 1);
+  }
   const legacy = [
     add('first_release', own.length >= 1),
-    add('double_shift', own.filter(b => todayKey(b.timestamp) === latestDate).length >= 2),
-    add('night_ops', ['Late Night'].includes(timeBucket(latest.timestamp))),
-    add('early_bird', ['Early Morning'].includes(timeBucket(latest.timestamp))),
-    add('heat_seeker', Number(latest.temp_f) > 85),
-    add('cold_front', Number(latest.temp_f) < 45),
-    add('high_pressure', Number(latest.pressure) > 1020),
-    add('field_reporter', (latest.note || '').trim().length >= 30),
+    // Checks any local day, not just the latest
+    add('double_shift', maxDay >= 2),
+    // Checks any bust at night, not just the latest
+    add('night_ops', own.some(b => timeBucket(b.timestamp) === 'Late Night')),
+    add('early_bird', own.some(b => timeBucket(b.timestamp) === 'Early Morning')),
+    // Checks any bust with the condition, not just the latest
+    add('heat_seeker', own.some(b => finiteNumber(b.temp_f) != null && finiteNumber(b.temp_f) > 85)),
+    add('cold_front', own.some(b => finiteNumber(b.temp_f) != null && finiteNumber(b.temp_f) < 45)),
+    add('high_pressure', own.some(b => finiteNumber(b.pressure) != null && finiteNumber(b.pressure) > 1020)),
+    add('field_reporter', own.some(b => (b.note || '').trim().length >= 30)),
     add('hat_trick', own.length >= 3),
-    add('week_warrior', own.filter(b => new Date(b.timestamp).getTime() >= weekAgo).length >= 5),
-    add('cartographer', latest.lat != null && latest.long != null)
+    // Checks any rolling 7-day window, not just the 7 days before the latest bust
+    add('week_warrior', maxWeek >= 5),
+    add('cartographer', own.some(hasFiniteCoordinates))
   ].filter(Boolean);
   return [...legacy, ...computeProgressionUnlocks(userId, busts, existing), ...computeExpansionUnlocks(userId, busts, existing, opts)].filter((id, index, all) => all.indexOf(id) === index);
 }
@@ -243,7 +279,7 @@ export function derivePersonalStats(userId, busts = [], unlocks = []) {
   const buckets = {};
   own.forEach(b => { const k = b.time_bucket || timeBucket(b.timestamp); buckets[k] = (buckets[k] || 0) + 1; });
   const favoriteBucket = Object.entries(buckets).sort((a, b) => b[1] - a[1])[0]?.[0] || '—';
-  const temps = own.filter(b => b.temp_f != null).map(b => Number(b.temp_f));
+  const temps = own.map(b => finiteNumber(b.temp_f)).filter(v => v != null);
   const avgTemp = temps.length ? Math.round(temps.reduce((s, t) => s + t, 0) / temps.length) : null;
   const notes = own.filter(b => (b.note || '').trim().length > 0).length;
   const first = own[0]?.timestamp || null;
@@ -275,15 +311,19 @@ export function deriveAllTimeRecords(busts = []) {
   }
 
   const volume = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
-  const withTemp = safeBusts.filter(b => b.temp_f != null && !Number.isNaN(Number(b.temp_f)));
-  const withPressure = safeBusts.filter(b => b.pressure != null && !Number.isNaN(Number(b.pressure)));
-  const coldest = [...withTemp].sort((a, b) => Number(a.temp_f) - Number(b.temp_f))[0];
-  const pressurePeak = [...withPressure].sort((a, b) => Number(b.pressure) - Number(a.pressure))[0];
+  const withTemp = safeBusts
+    .map(b => ({ ...b, _temp: finiteNumber(b.temp_f) }))
+    .filter(b => b._temp != null);
+  const withPressure = safeBusts
+    .map(b => ({ ...b, _pressure: finiteNumber(b.pressure) }))
+    .filter(b => b._pressure != null);
+  const coldest = [...withTemp].sort((a, b) => a._temp - b._temp)[0];
+  const pressurePeak = [...withPressure].sort((a, b) => b._pressure - a._pressure)[0];
   const earliest = [...safeBusts].sort((a, b) => {
     const ad = new Date(a.timestamp); const bd = new Date(b.timestamp);
     return ad.getHours() * 60 + ad.getMinutes() - (bd.getHours() * 60 + bd.getMinutes());
   })[0];
-  const hottest = [...withTemp].sort((a, b) => Number(b.temp_f) - Number(a.temp_f))[0];
+  const hottest = [...withTemp].sort((a, b) => b._temp - a._temp)[0];
   const nightCounts = new Map();
   safeBusts.filter(b => timeBucket(b.timestamp) === 'Late Night').forEach(b => { const k = b.username || 'Unknown'; nightCounts.set(k, (nightCounts.get(k) || 0) + 1); });
   const nightOwl = [...nightCounts.entries()].sort((a, b) => b[1] - a[1])[0];
@@ -294,10 +334,10 @@ export function deriveAllTimeRecords(busts = []) {
 
   return [
     { id: 'volume_king', label: 'Volume King', value: volume?.[0] || '—', detail: volume ? `${volume[1]} total records` : 'No events yet', icon: 'Crown' },
-    { id: 'coldest_bust', label: 'Coldest Bust', value: coldest ? `${Math.round(Number(coldest.temp_f))}°F` : '—', detail: coldest ? `${coldest.username || 'Unknown'} · ${timeBucket(coldest.timestamp)}` : 'Awaiting weather data', icon: 'Snowflake' },
-    { id: 'pressure_peak', label: 'Pressure Peak', value: pressurePeak ? `${Math.round(Number(pressurePeak.pressure))} hPa` : '—', detail: pressurePeak ? `${pressurePeak.username || 'Unknown'} · ${timeBucket(pressurePeak.timestamp)}` : 'Awaiting pressure data', icon: 'Gauge' },
+    { id: 'coldest_bust', label: 'Coldest Bust', value: coldest ? `${Math.round(coldest._temp)}°F` : '—', detail: coldest ? `${coldest.username || 'Unknown'} · ${timeBucket(coldest.timestamp)}` : 'Awaiting weather data', icon: 'Snowflake' },
+    { id: 'pressure_peak', label: 'Pressure Peak', value: pressurePeak ? `${Math.round(pressurePeak._pressure)} hPa` : '—', detail: pressurePeak ? `${pressurePeak.username || 'Unknown'} · ${timeBucket(pressurePeak.timestamp)}` : 'Awaiting pressure data', icon: 'Gauge' },
     { id: 'earliest_bust', label: 'Earliest Bust', value: earliest ? new Date(earliest.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '—', detail: earliest ? `${earliest.username || 'Unknown'} · ${timeBucket(earliest.timestamp)}` : 'No events yet', icon: 'AlarmClock' },
-    { id: 'hottest_bust', label: 'Hottest Bust', value: hottest ? `${Math.round(Number(hottest.temp_f))}°F` : '—', detail: hottest ? `${hottest.username || 'Unknown'} · ${timeBucket(hottest.timestamp)}` : 'Awaiting weather data', icon: 'Flame' },
+    { id: 'hottest_bust', label: 'Hottest Bust', value: hottest ? `${Math.round(hottest._temp)}°F` : '—', detail: hottest ? `${hottest.username || 'Unknown'} · ${timeBucket(hottest.timestamp)}` : 'Awaiting weather data', icon: 'Flame' },
     { id: 'streak_king', label: 'Streak King', value: streakKing && streakKing.longest > 0 ? `${streakKing.longest}d` : '—', detail: streakKing ? `${streakKing.name} · consecutive days` : 'No events yet', icon: 'Repeat2' },
     { id: 'night_owl', label: 'Night Owl', value: nightOwl?.[0] || '—', detail: nightOwl ? `${nightOwl[1]} late-night events` : 'No 12–4 AM activity', icon: 'Moon' },
     { id: 'wordsmith', label: 'Wordsmith', value: wordsmith?.username || '—', detail: wordsmith ? `${wordsmith.note.length}-char field report` : 'No notes filed', icon: 'NotebookPen' }

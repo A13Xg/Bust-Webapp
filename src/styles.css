@@ -158,6 +158,13 @@ header.top-bar{top:0;left:0;right:0;padding:10px clamp(12px,3vw,26px) 10px;paddi
 /* scatter tooltip + metric sub-value + note actions */
 .scatter-wrap{position:relative}
 .scatter-tip{position:absolute;transform:translate(-50%,-130%);background:#17171d;border:1px solid rgba(255,94,0,.5);color:var(--ink);font:800 12px Tahoma,sans-serif;padding:7px 11px;white-space:nowrap;pointer-events:none;box-shadow:0 10px 30px rgba(0,0,0,.5);z-index:5}
+/* horizontal bar chart */
+.hbar-list{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.hbar-row{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center}
+.hbar-label{font:700 12px Tahoma,sans-serif;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hbar-track{background:rgba(255,255,255,.07);border-radius:3px;overflow:hidden;height:22px}
+.hbar-fill{border-radius:3px;transition:width .4s ease;height:100%}
+.hbar-value{font:900 12px Tahoma,sans-serif;color:var(--muted);white-space:nowrap;text-align:right;min-width:40px}
 .metric-sub{display:block;font-style:normal;color:var(--muted);font:700 11px Tahoma,sans-serif;letter-spacing:1px}
 .note-back{position:fixed;inset:0;z-index:97;background:rgba(0,0,0,.68);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);padding:18px}
 .note-pop{position:fixed;translate:-50% -50%;width:min(520px,94vw);padding:40px 26px 24px;display:grid;gap:12px;text-align:left}
@@ -319,3 +326,8 @@ img,svg,canvas{max-width:100%}
 .record-card span{margin-top:0;color:var(--muted);font:900 11px Tahoma,sans-serif;letter-spacing:2px;text-transform:uppercase}
 .record-card strong{margin-top:0;font-size:30px;line-height:1;font-weight:900}
 .record-card p{margin:0;color:var(--muted);font-weight:700}
+
+/* Error boundary fallback */
+.error-boundary{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;text-align:center}
+.error-boundary h2{font-size:clamp(18px,4vw,28px);font-weight:900}
+.error-boundary p{color:var(--muted);max-width:480px}

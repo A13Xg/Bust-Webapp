@@ -1,0 +1,8 @@
+[functions.reconcile-achievements]
+verify_jwt = true
+
+[functions.register-push-subscription]
+verify_jwt = true
+
+[functions.dispatch-inactivity-reminders]
+verify_jwt = false

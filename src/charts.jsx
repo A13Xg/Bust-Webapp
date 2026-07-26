@@ -107,7 +107,32 @@ export function Gauge({ pct = 0, label = '', size = 120 }) {
   );
 }
 
-/** Scatter with valued axes and hover tooltips. points: [{x,y,label}] */
+/** Horizontal bar chart for ranked comparisons. items: [{label, value, pct, color?}] */
+export function HBarChart({ items = [], height = 32, maxLabel = 120 }) {
+  const palette = [ORANGE, '#ffd166', '#c77dff', '#7bdff2', '#57cc99', '#8ab4ff'];
+  if (!items.length) return <div className="empty-state"><span>No data yet.</span></div>;
+  return (
+    <ul className="hbar-list">
+      {items.map((item, i) => (
+        <li key={i} className="hbar-row">
+          <span className="hbar-label" style={{ minWidth: maxLabel }}>{item.label}</span>
+          <div className="hbar-track">
+            <div
+              className="hbar-fill"
+              style={{
+                width: `${Math.max(1, item.pct)}%`,
+                background: item.color || palette[i % palette.length],
+                height,
+              }}
+            />
+          </div>
+          <span className="hbar-value">{item.value}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function ScatterChart({ points = [], height = 240 }) {
   const [tip, setTip] = React.useState(null);
   const w = 600, h = height, padL = 52, padR = 14, padT = 12, padB = 34;

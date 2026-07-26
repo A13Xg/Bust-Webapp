@@ -3,7 +3,7 @@
  * Every item: { id, name, desc, tier, kind, category, micon (Material Symbol), points, check(ctx) }
  * ctx = { own, all, others, unlockedIds, opts:{ createdAt, userCount } }
  */
-import { todayKey, achievements, COOLDOWN_MS } from './rules.js';
+import { todayKey, achievements, COOLDOWN_MS, finiteNumber } from './rules.js';
 
 const MS_DAY = 86400000;
 const D = t => new Date(t);
@@ -22,13 +22,18 @@ const HOLIDAYS = ['1-1', '2-14', '3-17', '7-4', '10-31', '12-25', '12-31'];
 const SOLSTICE = ['3-19', '3-20', '3-21', '6-19', '6-20', '6-21', '6-22', '9-21', '9-22', '9-23', '9-24', '12-20', '12-21', '12-22', '12-23'];
 
 function haversineMiles(a, b) {
+  const aLat = finiteNumber(a.lat);
+  const aLong = finiteNumber(a.long);
+  const bLat = finiteNumber(b.lat);
+  const bLong = finiteNumber(b.long);
+  if (aLat == null || aLong == null || bLat == null || bLong == null) return 0;
   const R = 3958.8, toR = x => x * Math.PI / 180;
-  const dLat = toR(b.lat - a.lat), dLon = toR(b.long - a.long);
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toR(a.lat)) * Math.cos(toR(b.lat)) * Math.sin(dLon / 2) ** 2;
+  const dLat = toR(bLat - aLat), dLon = toR(bLong - aLong);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toR(aLat)) * Math.cos(toR(bLat)) * Math.sin(dLon / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 function legs(own) {
-  const pts = own.filter(b => b.lat != null && b.long != null);
+  const pts = own.filter(b => finiteNumber(b.lat) != null && finiteNumber(b.long) != null);
   const out = [];
   for (let i = 1; i < pts.length; i++) out.push(haversineMiles(pts[i - 1], pts[i]));
   return out;
@@ -49,11 +54,11 @@ function consecutiveMonths(own, need) { const ks = [...new Set(own.map(monthKey)
 function consecutiveQuarters(own, need) { const ks = [...new Set(own.map(quarterKey))].sort((a, b) => a - b); let run = 1; for (let i = 1; i < ks.length; i++) { run = ks[i] - ks[i - 1] === 1 ? run + 1 : 1; if (run >= need) return true; } return false; }
 function perfectMonth(own) { const byMonth = {}; own.forEach(b => { const d = D(b.timestamp); const k = `${d.getFullYear()}-${d.getMonth()}`; (byMonth[k] = byMonth[k] || new Set()).add(d.getDate()); }); return Object.entries(byMonth).some(([k, days]) => { const [y, m] = k.split('-').map(Number); return days.size >= new Date(y, m + 1, 0).getDate(); }); }
 const daysWithTwo = own => { const c = {}; own.forEach(b => { const k = todayKey(b.timestamp); c[k] = (c[k] || 0) + 1; }); return Object.values(c).filter(n => n >= 2).length; };
-const pressureBand = p => { p = Number(p); if (!Number.isFinite(p)) return null; if (p < 990) return 0; if (p < 1005) return 1; if (p < 1015) return 2; if (p < 1025) return 3; return 4; };
-const tempBand = t => { t = Number(t); if (!Number.isFinite(t)) return null; if (t < 32) return 0; if (t < 52) return 1; if (t < 72) return 2; if (t < 92) return 3; return 4; };
-const elevation = b => { const e = Number(b.elevation_ft); return Number.isFinite(e) ? e : null; };
+const pressureBand = p => { p = finiteNumber(p); if (p == null) return null; if (p < 990) return 0; if (p < 1005) return 1; if (p < 1015) return 2; if (p < 1025) return 3; return 4; };
+const tempBand = t => { t = finiteNumber(t); if (t == null) return null; if (t < 32) return 0; if (t < 52) return 1; if (t < 72) return 2; if (t < 92) return 3; return 4; };
+const elevation = b => finiteNumber(b.elevation_ft);
 const elevationBand = b => { const e = elevation(b); if (e == null) return null; if (e < 100) return 0; if (e < 1000) return 1; if (e < 5280) return 2; if (e < 8000) return 3; return 4; };
-const tideSign = b => { const t = Number(b.tide_ft); return Number.isFinite(t) ? (t >= 0 ? 1 : -1) : null; };
+const tideSign = b => { const t = finiteNumber(b.tide_ft); return t != null ? (t >= 0 ? 1 : -1) : null; };
 const homeCityMax = own => { const c = {}; cities(own).forEach(x => c[x] = (c[x] || 0) + 1); return Math.max(0, ...Object.values(c)); };
 function citiesInWeek(own, need) { const pts = own.filter(b => b.city); for (let i = 0; i < pts.length; i++) { const set = new Set(); for (let j = i; j < pts.length; j++) { if (D(pts[j].timestamp) - D(pts[i].timestamp) > 7 * MS_DAY) break; set.add(pts[j].city.trim()); } if (set.size >= need) return true; } return false; }
 const EMOJI = /\p{Extended_Pictographic}/u;
@@ -123,12 +128,12 @@ export const expansionCatalog = [
 
   // ---- Expedition — achievements
   item('storm_chaser', 'Storm Chaser', 'Bust while pressure is Very Low (<990 hPa).', 'gold', 'achievement', 'Expedition', 'storm', 55, c => c.own.some(b => pressureBand(b.pressure) === 0)),
-  item('perfect_conditions', 'Perfect Conditions', 'Bust at 68–72°F with Medium pressure.', 'silver', 'achievement', 'Expedition', 'thermostat', 40, c => c.own.some(b => Number(b.temp_f) >= 68 && Number(b.temp_f) <= 72 && pressureBand(b.pressure) === 2)),
+  item('perfect_conditions', 'Perfect Conditions', 'Bust at 68–72°F with Medium pressure.', 'silver', 'achievement', 'Expedition', 'thermostat', 40, c => c.own.some(b => { const t = finiteNumber(b.temp_f); return t != null && t >= 68 && t <= 72 && pressureBand(b.pressure) === 2; })),
   item('traveler', 'Traveler', 'Bust from 2 different cities.', 'silver', 'achievement', 'Expedition', 'luggage', 40, c => new Set(cities(c.own)).size >= 2),
   item('jet_setter', 'Jet Setter', 'Bust from 5 different cities.', 'platinum', 'achievement', 'Expedition', 'flight_takeoff', 100, c => new Set(cities(c.own)).size >= 5),
   item('border_runner', 'Border Runner', 'Bust 100+ miles from your previous bust.', 'gold', 'achievement', 'Expedition', 'route', 65, c => legs(c.own).some(m => m >= 100)),
   item('home_base', 'Home Base', '10 busts from the same city.', 'silver', 'achievement', 'Expedition', 'home', 45, c => homeCityMax(c.own) >= 10),
-  item('freezing_point', 'Freezing Point', 'Bust at exactly 32°F (±0.5°).', 'gold', 'achievement', 'Expedition', 'ac_unit', 60, c => c.own.some(b => Math.abs(Number(b.temp_f) - 32) <= 0.5)),
+  item('freezing_point', 'Freezing Point', 'Bust at exactly 32°F (±0.5°).', 'gold', 'achievement', 'Expedition', 'ac_unit', 60, c => c.own.some(b => { const t = finiteNumber(b.temp_f); return t != null && Math.abs(t - 32) <= 0.5; })),
   item('sea_level_scout', 'Sea-Level Scout', 'Bust below 100ft ASL.', 'bronze', 'achievement', 'Expedition', 'waves', 25, c => c.own.some(b => elevation(b) != null && elevation(b) < 100)),
   item('thin_air', 'Thin Air', 'Bust above 5,280ft ASL.', 'gold', 'achievement', 'Expedition', 'landscape_2', 70, c => c.own.some(b => elevation(b) >= 5280)),
   item('cloudline_climber', 'Cloudline Climber', 'Bust above 8,000ft ASL.', 'platinum', 'achievement', 'Expedition', 'filter_hdr', 115, c => c.own.some(b => elevation(b) >= 8000)),
