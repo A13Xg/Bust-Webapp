@@ -324,7 +324,7 @@ function Dashboard({user,setUser}){ const [busts,setBusts]=useState([]),[users,s
     setPendingCtx(null); setPhase('idle'); }
   async function saveBustNote(bust,noteText){ const updated=await backend.patchBustNote(bust.id,noteText); const current=[updated,...bustRef.current.filter(b=>b.id!==updated.id)]; setBusts(current); setSelected(prev=>prev?.id===updated.id?{...prev,...updated}:prev);
     const allNew=computeAchievementUnlocks(updated.user_id,current,unlocksRef.current,{createdAt:user.created_at,userCount:usersRef.current.length});
-    await persistAndShowUnlocks(allNew);
+    try{ await persistAndShowUnlocks(allNew); }catch(e){ console.error('Achievement reconciliation failed', e); }
     return updated; }
   const effectiveBusts=useMemo(()=>[...debugBusts,...busts],[debugBusts,busts]);
   const effectiveUnlocks=useMemo(()=>[...debugUnlocks,...unlocks],[debugUnlocks,unlocks]);
