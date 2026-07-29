@@ -1,4 +1,5 @@
 import globals from 'globals';
+import react from 'eslint-plugin-react';
 
 export default [
   {
@@ -6,6 +7,7 @@ export default [
   },
   {
     files: ['src/**/*.{js,jsx}', 'server/**/*.js', 'scripts/**/*.mjs'],
+    plugins: { react },
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
@@ -25,6 +27,7 @@ export default [
       'no-duplicate-case': 'error',
       'no-self-assign': 'error',
       'no-unreachable': 'warn',
+      'react/jsx-uses-vars': 'error',
     },
   },
 ];

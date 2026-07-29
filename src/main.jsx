@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -118,7 +118,6 @@ function itemProgress(item,busts=[],user,unlocks=[]){
   const cap=n=>Math.min(goal,Math.max(0,n||0));
   const distinct=fn=>new Set(own.map(fn).filter(v=>v!=null&&v!=='')).size;
   const count=fn=>own.filter(fn).length;
-  const md=b=>{const d=new Date(b.timestamp);return `${d.getMonth()+1}-${d.getDate()}`;};
   const notes=own.map(b=>String(b.note||'')).filter(n=>n.trim().length);
   if(unlocked) return {value:goal,goal,pct:100,label:`${goal}/${goal}`};
   let value=0;

@@ -28,7 +28,7 @@ export function dedupeItems(items, seenSet) {
  * - Returns { current, enqueue, dismiss }.
  */
 export function useAchievementQueue(durationMs = 5200) {
-  const [queue, setQueue] = useState([]);
+  const [_queue, setQueue] = useState([]);
   const [current, setCurrent] = useState(null);
   const timerRef = useRef(null);
   // Track IDs shown during this session to avoid replaying restored achievements.
