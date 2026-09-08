@@ -34,13 +34,15 @@ Deno.serve(async req => {
         .from('busts')
         .select('id,user_id,note,city,timestamp')
         .gte('timestamp', since)
-        .order('timestamp', { ascending: true })
+        // Newest first: under a burst the budget must go to events that can still
+        // be announced usefully, not to old ones that were already handled.
+        .order('timestamp', { ascending: false })
         .limit(MAX_EVENTS_PER_RUN),
       admin
         .from('achievements')
         .select('id,user_id,achievement_type,unlocked_at')
         .gte('unlocked_at', since)
-        .order('unlocked_at', { ascending: true })
+        .order('unlocked_at', { ascending: false })
         .limit(MAX_EVENTS_PER_RUN),
       admin.from('push_events').select('kind,source_id').gte('created_at', since),
     ]);

@@ -128,13 +128,15 @@ export async function showNotification(title, options = {}, deps = {}) {
       // fall through to the constructor path
     }
   }
-  return sendBrowserNotification(title, options, notificationApi);
+  return sendBrowserNotification(title, withNotificationDefaults(options, deps.baseUrl), notificationApi);
 }
 
 function withNotificationDefaults(options = {}, baseUrl = '/') {
   const icon = options.icon || `${baseUrl}icons/icon-192.png`;
   return {
-    badge: icon,
+    // Android renders `badge` as a monochrome alpha mask, so it gets its own
+    // single-colour asset rather than the full-colour icon.
+    badge: `${baseUrl}icons/badge-96.png`,
     icon,
     ...options,
     // `renotify` is invalid without a tag and makes Chrome throw.
@@ -147,11 +149,20 @@ async function getActiveRegistration(nav = globalThis.navigator) {
   try {
     const existing = await nav.serviceWorker.getRegistration();
     if (existing?.active) return existing;
-    // `ready` never rejects; guard it so a worker that never activates cannot hang the caller.
-    return await Promise.race([
-      nav.serviceWorker.ready,
-      new Promise(resolve => setTimeout(() => resolve(existing || null), 4000)),
-    ]);
+    // `ready` never rejects; guard it so a worker that never activates cannot
+    // hang the caller. The timer is cleared either way — this runs on every
+    // notification and every silent re-arm, so a leaked timer per call adds up.
+    let timer = null;
+    try {
+      return await Promise.race([
+        nav.serviceWorker.ready,
+        new Promise(resolve => {
+          timer = setTimeout(() => resolve(existing || null), 4000);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   } catch {
     return null;
   }
@@ -226,8 +237,15 @@ export function toSerializablePushSubscription(subscription) {
  * the browser will not tell you — it just stops delivering.
  */
 export function subscriptionKeyMismatch(subscription, vapidPublicKey) {
-  const applied = subscription?.options?.applicationServerKey;
-  if (!applied || !vapidPublicKey) return false;
+  if (!vapidPublicKey) return false;
+  const options = subscription?.options;
+  // A browser that does not expose `options` gives us nothing to judge; keeping
+  // a possibly-good subscription beats destroying it on a guess.
+  if (!options) return false;
+  const applied = options.applicationServerKey;
+  // Exposed but empty means the subscription was created without a VAPID key.
+  // Our sends are all VAPID-signed, so that endpoint will reject forever.
+  if (!applied) return true;
   try {
     return uint8ArrayToBase64Url(applied) !== String(vapidPublicKey).trim();
   } catch {

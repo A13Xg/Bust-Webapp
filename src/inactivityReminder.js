@@ -92,7 +92,11 @@ export function reconcileInactivityReminderState({ state, latestBustAt, now = Da
     lastMessageIndex: null,
   };
 
-  if (state?.cycleBustAt === normalized.cycleBustAt) {
+  // Compare instants, never strings. Postgres serialises timestamptz as
+  // "…12:00:00.123456+00:00" while Date#toISOString gives "…12:00:00.123Z", so a
+  // string compare is false for every row read back from the database — which
+  // silently discards lastSentAt and re-fires the reminder on every dispatch.
+  if (toEpochMs(state?.cycleBustAt) === cycleBustMs) {
     normalized.scheduledFor = typeof state.scheduledFor === 'string' ? state.scheduledFor : null;
     normalized.lastSentAt = typeof state.lastSentAt === 'string' ? state.lastSentAt : null;
     normalized.lastMessageIndex = Number.isInteger(state.lastMessageIndex) ? state.lastMessageIndex : null;

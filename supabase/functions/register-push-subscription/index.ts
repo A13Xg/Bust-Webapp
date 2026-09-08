@@ -64,7 +64,8 @@ Deno.serve(async req => {
     // Keep the reminder cycle in sync so a newly armed device is not immediately
     // nagged (or skipped) because its schedule was never initialised.
     const [profileResult, reminderStateResult] = await Promise.all([
-      admin.from('profiles').select('last_bust_timestamp').eq('id', userId).single(),
+      // maybeSingle: an auth user with no profile row must still be able to arm push.
+      admin.from('profiles').select('last_bust_timestamp').eq('id', userId).maybeSingle(),
       admin
         .from('inactivity_reminders')
         .select('cycle_bust_at,scheduled_for,last_sent_at,last_message_index')

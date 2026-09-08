@@ -11,6 +11,26 @@ import { corsHeaders, json } from '../_shared/push.ts';
 
 // A client that crashes mid-bust is covered by dispatch-push-backstop instead.
 const MAX_EVENT_AGE_MS = 15 * 60 * 1000;
+// The ledger already caps each row at one push, but a client can mint many
+// achievement rows at once by re-reconciling. Cap how loud one account can be.
+const RATE_WINDOW_MS = 5 * 60 * 1000;
+const RATE_MAX_EVENTS = 12;
+
+async function overRateLimit(admin: ReturnType<typeof createClient>, userId: string) {
+  const since = new Date(Date.now() - RATE_WINDOW_MS).toISOString();
+  const { count, error } = await admin
+    .from('push_events')
+    .select('id', { count: 'exact', head: true })
+    .eq('actor_id', userId)
+    .gte('created_at', since);
+  // Never fail closed on a bookkeeping error — a missed notification is worse
+  // than an unthrottled one, and the ledger still prevents duplicates.
+  if (error) {
+    console.error('[notify-event] rate check failed', error.message);
+    return false;
+  }
+  return (count ?? 0) >= RATE_MAX_EVENTS;
+}
 
 Deno.serve(async req => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -39,6 +59,10 @@ Deno.serve(async req => {
     if (!kind || !id) return json(400, { error: 'Expected { kind: "bust" | "achievement", id }' });
 
     const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+
+    if (await overRateLimit(admin, userId)) {
+      return json(429, { error: 'Too many crew notifications from this account. Try again shortly.' });
+    }
 
     if (kind === 'bust') {
       const { data, error } = await admin

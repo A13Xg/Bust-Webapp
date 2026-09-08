@@ -38,19 +38,21 @@ export type PushPayload = {
   data?: Record<string, unknown>;
 };
 
-let vapidConfigured = false;
+// Keyed on the public key rather than a boolean: a warm isolate that cached a
+// boolean would keep signing with a rotated-away private key until it recycled.
+let vapidConfiguredFor: string | null = null;
 
 /** Throws with an actionable message when the VAPID pair is missing. */
 export function configureVapid() {
-  if (vapidConfigured) return;
   const publicKey = Deno.env.get('VAPID_PUBLIC_KEY');
   const privateKey = Deno.env.get('VAPID_PRIVATE_KEY');
   if (!publicKey || !privateKey) {
     throw new Error('VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY are not set on this project');
   }
+  if (vapidConfiguredFor === publicKey) return;
   const subject = Deno.env.get('VAPID_SUBJECT') || 'mailto:noreply@bust-ops.dev';
   webpush.setVapidDetails(subject, publicKey, privateKey);
-  vapidConfigured = true;
+  vapidConfiguredFor = publicKey;
 }
 
 function statusCodeOf(error: unknown) {
@@ -125,8 +127,12 @@ export async function sendToSubscriptions(
     result.pruned = goneIds.length;
   }
   if (failedIds.length) {
-    // Best-effort health counter; a transient 500 from a push service is normal.
-    await admin.from('push_subscriptions').update({ updated_at: nowIso }).in('id', failedIds);
+    // A push service can reject for reasons that are not "gone" — most notably a
+    // 403 when the subscription was created without our VAPID key. Those never
+    // recover, so count them and let the database drop an endpoint that has
+    // failed persistently. A transient 5xx is cleared by the next success.
+    const { error } = await admin.rpc('bump_push_failure', { subscription_ids: failedIds });
+    if (error) console.error('[push] failure bookkeeping failed', error.message);
   }
 
   return result;
@@ -165,6 +171,16 @@ export async function claimPushEvent(
   return data?.id ?? null;
 }
 
+/**
+ * Give a claim back after a failed dispatch, so the scheduled sweep can retry.
+ * Without this, any error between claiming and sending silently and permanently
+ * suppresses that notification.
+ */
+export async function releasePushEvent(admin: SupabaseClient, eventId: number) {
+  const { error } = await admin.from('push_events').delete().eq('id', eventId);
+  if (error) console.error('[push] could not release claim', eventId, error.message);
+}
+
 export async function finishPushEvent(
   admin: SupabaseClient,
   eventId: number,
@@ -176,11 +192,20 @@ export async function finishPushEvent(
     .eq('id', eventId);
 }
 
-/** Constant-time-ish comparison so a wrong cron secret cannot be probed byte by byte. */
+/**
+ * Comparison whose running time does not depend on where the first differing
+ * byte is, and which does not return early on a length mismatch (that would
+ * leak the secret's length to a prober).
+ */
 export function secretsMatch(a: string | null, b: string | null) {
-  if (!a || !b || a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  const left = String(a ?? '');
+  const right = String(b ?? '');
+  if (!left || !right) return false;
+  let diff = left.length ^ right.length;
+  const span = Math.max(left.length, right.length);
+  for (let i = 0; i < span; i += 1) {
+    diff |= left.charCodeAt(i % left.length) ^ right.charCodeAt(i % right.length);
+  }
   return diff === 0;
 }
 

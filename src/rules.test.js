@@ -127,15 +127,23 @@ describe('BUST rules', () => {
       { user_id: 'u2', username: 'Lin', timestamp: new Date(2026, 0, 1, 22, 30).toISOString(), temp_f: 91, pressure: 1030, note: 'hot high pressure note' },
       { user_id: 'u2', username: 'Lin', timestamp: new Date(2026, 0, 2, 22, 30).toISOString(), temp_f: 88, pressure: 1022, note: 'repeat' }
     ];
+    busts[0].btc_usd = 42000;
+    busts[1].btc_usd = 98000;
 
     const records = deriveAllTimeRecords(busts);
 
-    expect(records.map(r => r.id)).toEqual(['volume_king', 'coldest_bust', 'pressure_peak', 'earliest_bust', 'hottest_bust', 'streak_king', 'night_owl', 'wordsmith']);
+    expect(records.map(r => r.id)).toEqual(['volume_king', 'coldest_bust', 'pressure_peak', 'earliest_bust', 'hottest_bust', 'streak_king', 'night_owl', 'wordsmith', 'btc_peak', 'btc_trough']);
     expect(records[0].value).toBe('Lin');
     expect(records[0].detail).toContain('2 total');
     expect(records[1].value).toBe('35°F');
     expect(records[2].value).toBe('1030 hPa');
     expect(records[3].detail).toContain('Ada');
+    // btc_usd is nullable, so the records must read the priced rows only.
+    expect(records[8].value).toBe('$98,000');
+    expect(records[8].detail).toContain('Lin');
+    expect(records[9].value).toBe('$42,000');
+    expect(records[9].detail).toContain('Ada');
+    expect(deriveAllTimeRecords([{ user_id: 'u1', username: 'Ada', timestamp: new Date().toISOString() }])[8].value).toBe('—');
     expect(records[4].value).toBe('91°F');
     expect(records[5].value).toBe('2d');
     expect(records[5].detail).toContain('Lin');

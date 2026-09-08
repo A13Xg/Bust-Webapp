@@ -24,10 +24,12 @@ create table if not exists busts (
   city text,
   elevation_ft numeric,
   tide_ft numeric,
+  btc_usd numeric,
   time_bucket text not null
 );
 alter table busts add column if not exists elevation_ft numeric;
 alter table busts add column if not exists tide_ft numeric;
+alter table busts add column if not exists btc_usd numeric;
 create table if not exists achievements (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references users(id) on delete cascade,

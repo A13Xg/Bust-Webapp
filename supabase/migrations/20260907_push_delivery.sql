@@ -68,9 +68,10 @@ create table if not exists public.push_events (
 
 create index if not exists push_events_created_idx on public.push_events (created_at desc);
 
--- Service-role only. Clients never read or write this ledger.
+-- Service-role only. RLS enabled with zero policies is a complete deny for both
+-- `anon` and `authenticated`; the service role bypasses RLS. Deliberately no
+-- policy is defined here — clients never read or write this ledger.
 alter table public.push_events enable row level security;
-drop policy if exists push_events_no_access on public.push_events;
 
 -- ---------- reminder reset trigger (idempotent re-declaration) ----------
 -- A fresh bust clears the user's reminder cycle, so the 5-7 day clock restarts.

@@ -35,6 +35,56 @@ export function TrendChart({ data = [], height = 180 }) {
   );
 }
 
+/** Price-over-events line with a min/max band. points: [{label, value}] in chronological order. */
+export function PriceLine({ points = [], height = 200, format = v => String(Math.round(v)) }) {
+  const w = 600, h = height, padL = 58, padR = 12, padT = 18, padB = 22;
+  if (points.length < 2) {
+    return <div className="empty-state"><span>Not enough priced busts yet.</span></div>;
+  }
+  const values = points.map(p => p.value);
+  let lo = Math.min(...values), hi = Math.max(...values);
+  // A flat series would divide by zero; give it a visible band instead.
+  if (lo === hi) { lo -= Math.max(1, lo * 0.01); hi += Math.max(1, hi * 0.01); }
+  const pad = (hi - lo) * 0.12;
+  lo -= pad; hi += pad;
+  const step = (w - padL - padR) / (points.length - 1);
+  const px = i => padL + i * step;
+  const py = v => h - padB - ((v - lo) / (hi - lo)) * (h - padT - padB);
+  const pts = points.map((p, i) => [px(i), py(p.value)]);
+  const line = pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+  const area = `${line} L${pts[pts.length - 1][0]},${h - padB} L${pts[0][0]},${h - padB} Z`;
+  const first = values[0], last = values[values.length - 1];
+  const up = last >= first;
+  const stroke = up ? ORANGE2 : '#8ab4ff';
+  const gridValues = [0, 0.5, 1].map(f => lo + (hi - lo) * f);
+  return (
+    <svg className="chart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" role="img" aria-label="Bitcoin price at each bust">
+      <defs>
+        <linearGradient id="priceFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={stroke} stopOpacity=".38" />
+          <stop offset="100%" stopColor={stroke} stopOpacity=".02" />
+        </linearGradient>
+      </defs>
+      {gridValues.map((v, i) => (
+        <g key={i}>
+          <line x1={padL} x2={w - padR} y1={py(v)} y2={py(v)} stroke={LINE} strokeDasharray="3 5" />
+          <text x={padL - 6} y={py(v) + 4} textAnchor="end" fill={MUTED} fontSize="10" fontWeight="900">{format(v)}</text>
+        </g>
+      ))}
+      <path d={area} fill="url(#priceFill)" />
+      <path d={line} fill="none" stroke={stroke} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+      {pts.map(([x, y], i) => (
+        <circle key={i} cx={x} cy={y} r="4" fill={MILK} stroke={stroke} strokeWidth="1.5" style={{ cursor: 'pointer' }}>
+          <title>{`${points[i].label}: ${format(points[i].value)}`}</title>
+        </circle>
+      ))}
+      <text x={padL} y={12} fill={MUTED} fontSize="10" fontWeight="900" letterSpacing="1.2">
+        {`${format(first)} → ${format(last)}`}
+      </text>
+    </svg>
+  );
+}
+
 /** Donut of categorical shares. data: [{label, value, color?}] */
 export function DonutChart({ data = [], size = 200 }) {
   const total = data.reduce((s, d) => s + d.value, 0);

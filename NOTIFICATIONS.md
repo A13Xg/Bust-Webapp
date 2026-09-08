@@ -66,6 +66,24 @@ If they diverge, every push is signed with a key the subscription was not create
 for and the push service drops it. `deploy.yml` fails the build if the browser
 key is missing entirely.
 
+**Compare instants, never timestamp strings.** Postgres serialises `timestamptz`
+as `2026-08-25T12:00:00.123456+00:00`; `Date#toISOString()` produces
+`2026-08-25T12:00:00.123Z`. A string comparison between the two is false for
+every row read back from the database. `reconcileInactivityReminderState` used to
+do exactly that, which discarded `lastSentAt` on every dispatch and re-fired the
+reminder — 144 pushes a day per lapsed user at a 10-minute cadence. Anything
+comparing a stored timestamp goes through `toEpochMs()`.
+
+**A claim is released if delivery fails.** `push_events` is what stops two
+callers announcing the same row, so holding a claim after a failed send would
+suppress that notification permanently — the backstop would see the row and skip
+it forever. `announce()` deletes the claim on any error so the sweep can retry.
+
+**`startMessages()` is required.** The `ServiceWorkerContainer` message queue
+only starts implicitly when an `onmessage` property is assigned. With
+`addEventListener` alone, everything the worker posts is queued and never
+delivered, including subscription-rotation handoffs.
+
 **One endpoint, one account.** `push_subscriptions` has a unique index on
 `endpoint`, and `register-push-subscription` deletes any other account's claim on
 the same endpoint. Without that, two people sharing a browser receive each
@@ -106,6 +124,14 @@ Repository secrets required by `.github/workflows/notify-cron.yml`:
    actually took a push.
 5. **OS-level settings.** macOS Focus modes, Windows Focus Assist and per-site
    notification settings all suppress delivery after the browser has accepted it.
+
+## Known coverage gaps
+
+`npm run lint` covers `src/`, `server/`, `scripts/` and `public/sw.js`. Nothing
+under `supabase/functions/` is linted or typechecked by any CI gate — it is Deno
+TypeScript and the repo has no Deno toolchain. Treat a green CI run as saying
+nothing about the Edge Functions; exercise them with the smoke calls above after
+any change.
 
 ## Verifying VAPID credentials
 

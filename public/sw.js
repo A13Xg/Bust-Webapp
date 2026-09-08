@@ -40,6 +40,9 @@ function parsePushPayload(event) {
 
 function buildNotification(payload) {
   const icon = payload.icon ? scoped(payload.icon) : scoped('icons/icon-192.png');
+  // Android draws `badge` as a monochrome alpha mask in the status bar, so it
+  // needs a dedicated single-colour asset — a full-colour icon renders as a blob.
+  const badge = scoped('icons/badge-96.png');
   const tag = payload.tag || `bust-${payload.kind || 'event'}-${Date.now()}`;
   return [
     payload.title || 'BUST',
@@ -47,7 +50,7 @@ function buildNotification(payload) {
       body: payload.body || 'Pressure event received.',
       tag,
       icon,
-      badge: icon,
+      badge,
       // Explicitly re-alert on a reused tag; without this Chrome silently
       // swallows the second notification in a tag group.
       renotify: payload.renotify !== false,

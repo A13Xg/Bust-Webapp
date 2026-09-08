@@ -100,7 +100,7 @@ app.get('/api/busts/recent', auth, async (req, res) => {
 app.post('/api/bust', auth, perUserRateLimit({ keyPrefix: 'bust', windowMs: 30_000, max: 8 }), async (req, res) => {
   try {
     const now = new Date();
-    const { note = '', temp_f = null, pressure = null, lat = null, long = null, city = null, elevation_ft = null, tide_ft = null } = req.body || {};
+    const { note = '', temp_f = null, pressure = null, lat = null, long = null, city = null, elevation_ft = null, tide_ft = null, btc_usd = null } = req.body || {};
     const bustRow = await withTransaction(async (client) => {
       const { rows: lockRows } = await client.query(
         `select id from users where id=$1 and (last_bust_timestamp is null or now() - last_bust_timestamp >= interval '2 hours') for update`,
@@ -110,8 +110,8 @@ app.post('/api/bust', auth, perUserRateLimit({ keyPrefix: 'bust', windowMs: 30_0
         const err = new Error('Cooldown is still active'); err.code = 'COOLDOWN'; throw err;
       }
       const { rows } = await client.query(
-        `insert into busts (user_id, timestamp, note, temp_f, pressure, lat, long, city, elevation_ft, tide_ft, time_bucket) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning *`,
-        [req.user.id, now, String(note).slice(0, 240), temp_f, pressure, lat, long, city, elevation_ft, tide_ft, timeBucket(now)]
+        `insert into busts (user_id, timestamp, note, temp_f, pressure, lat, long, city, elevation_ft, tide_ft, btc_usd, time_bucket) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning *`,
+        [req.user.id, now, String(note).slice(0, 240), temp_f, pressure, lat, long, city, elevation_ft, tide_ft, btc_usd, timeBucket(now)]
       );
       await client.query('update users set last_bust_timestamp=$1 where id=$2', [now, req.user.id]);
       return rows[0];

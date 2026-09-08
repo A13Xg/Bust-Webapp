@@ -14,7 +14,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "lint": "eslint src server scripts",
+    "lint": "eslint src server scripts public/sw.js",
     "format:check": "prettier --check \"src/**/*.{js,jsx,css}\" \"server/**/*.js\" \"scripts/**/*.mjs\"",
     "typecheck": "tsc --noEmit",
     "db:check": "node scripts/ci-db-check.mjs",

@@ -75,6 +75,33 @@ const chainLeader = (own, all) => count(own, b => new Set(all.filter(o => o.user
 const synced = (own, others) => count(own, b => others.some(o => within(b, o, 60000)));
 const firstOfDay = (own, all) => count(own, b => { const k = todayKey(b.timestamp); const first = all.filter(x => todayKey(x.timestamp) === k).sort((a, c) => D(a.timestamp) - D(c.timestamp))[0]; return first && first.id === b.id; });
 
+/* ---- Market helpers (Bitcoin spot price stamped on each bust) ---- */
+const btc = b => finiteNumber(b.btc_usd);
+/* Chronological busts that actually carry a price. Everything in the Market
+   category is scoped to these, so a stretch of failed lookups can never make an
+   achievement look earned (or unearned) for the wrong reason. */
+const priced = own => own.filter(b => btc(b) != null);
+/* True when `pick` holds for some bust that has at least `minPrior` priced busts
+   before it — used for the "new personal high/low" style checks. */
+function anyAfter(own, minPrior, pick) {
+  const list = priced(own);
+  for (let i = minPrior; i < list.length; i += 1) {
+    if (pick(list[i], list.slice(0, i))) return true;
+  }
+  return false;
+}
+/* Longest run of consecutive priced busts whose price moved monotonically. */
+function longestRun(own, ordered) {
+  const list = priced(own);
+  let best = list.length ? 1 : 0;
+  let run = best;
+  for (let i = 1; i < list.length; i += 1) {
+    run = ordered(btc(list[i - 1]), btc(list[i])) ? run + 1 : 1;
+    if (run > best) best = run;
+  }
+  return best;
+}
+
 function item(id, name, desc, tier, kind, category, micon, points, check) {
   return { id, name, desc, tier, kind, category, micon, points, check, track: 'expansion', icon: 'Shield', accent: { bronze: '#cd7f32', silver: '#c9ccd3', gold: '#ffd166', platinum: '#9be8f0', mythic: '#c77dff' }[tier], goal: 1 };
 }
@@ -166,6 +193,21 @@ export const expansionCatalog = [
   item('full_manuscript', 'Full Manuscript', '5 max-length notes.', 'gold', 'badge', 'Wordsmith', 'auto_stories', 105, c => count(notes(c.own), n => n.length >= 240) >= 5),
   item('minimalist_monk', 'Minimalist Monk', '25 one-word notes.', 'gold', 'badge', 'Wordsmith', 'self_improvement', 95, c => count(notes(c.own), oneWord) >= 25),
   item('bard_of_the_bay', 'Bard of the Bay', '10 notes with archaic English.', 'silver', 'badge', 'Wordsmith', 'theater_comedy', 85, c => count(notes(c.own), n => ARCHAIC.test(n)) >= 10),
+  // ---- Market — Bitcoin at the moment of the bust
+  item('sats_stacker', 'Sats Stacker', 'Log 10 busts with a recorded BTC price.', 'bronze', 'badge', 'Market', 'currency_bitcoin', 40, c => priced(c.own).length >= 10),
+  item('six_figure_summit', 'Six Figure Summit', 'Bust while BTC is at or above $100,000.', 'gold', 'achievement', 'Market', 'trending_up', 60, c => c.own.some(b => btc(b) != null && btc(b) >= 100000)),
+  item('capitulation_witness', 'Capitulation Witness', 'Bust while BTC is under $30,000.', 'gold', 'achievement', 'Market', 'trending_down', 60, c => c.own.some(b => btc(b) != null && btc(b) < 30000)),
+  item('personal_ath', 'Local Top', 'Bust at a higher BTC price than any of your previous five-plus busts.', 'silver', 'achievement', 'Market', 'north_east', 45, c => anyAfter(c.own, 5, (b, prior) => btc(b) > Math.max(...prior.map(btc)))),
+  item('personal_atl', 'Local Bottom', 'Bust at a lower BTC price than any of your previous five-plus busts.', 'silver', 'achievement', 'Market', 'south_east', 45, c => anyAfter(c.own, 5, (b, prior) => btc(b) < Math.min(...prior.map(btc)))),
+  item('whipsaw', 'Whipsaw', 'Two busts in a row more than 10% apart in BTC price.', 'gold', 'badge', 'Market', 'swap_vert', 55, c => { const l = priced(c.own); return l.some((b, i) => i > 0 && Math.abs(btc(b) - btc(l[i - 1])) / btc(l[i - 1]) > 0.1); }),
+  item('number_go_up', 'Number Go Up', 'Four consecutive busts at a strictly higher BTC price.', 'platinum', 'badge', 'Market', 'stacked_line_chart', 70, c => longestRun(c.own, (a, b) => b > a) >= 4),
+  item('number_go_down', 'Number Go Down', 'Four consecutive busts at a strictly lower BTC price.', 'platinum', 'badge', 'Market', 'moving', 70, c => longestRun(c.own, (a, b) => b < a) >= 4),
+  item('diamond_hands', 'Diamond Hands', 'Ten priced busts spanning a 2x range from your lowest to your highest.', 'platinum', 'badge', 'Market', 'diamond', 90, c => { const v = priced(c.own).map(btc); return v.length >= 10 && Math.max(...v) >= Math.min(...v) * 2; }),
+  item('round_number_ritual', 'Round Number Ritual', 'Bust within $50 of a clean $1,000 multiple.', 'silver', 'achievement', 'Market', 'exposure_zero', 40, c => c.own.some(b => { const p = btc(b); return p != null && Math.min(p % 1000, 1000 - (p % 1000)) <= 50; })),
+  item('genesis_block_day', 'Genesis Block', 'Bust on January 3rd, the day the chain started.', 'gold', 'achievement', 'Market', 'deployed_code', 50, c => c.own.some(b => md(b) === '1-3')),
+  item('pizza_day', 'Pizza Day', 'Bust on May 22nd. Two pizzas, ten thousand coins, no regrets.', 'gold', 'achievement', 'Market', 'local_pizza', 50, c => c.own.some(b => md(b) === '5-22')),
+  item('whitepaper_day', 'Whitepaper Day', 'Bust on October 31st, the date of the original paper.', 'gold', 'achievement', 'Market', 'description', 50, c => c.own.some(b => md(b) === '10-31')),
+  item('market_hours_mogul', 'Market Hours Mogul', 'Five priced busts on a weekday between 09:00 and 16:00.', 'silver', 'badge', 'Market', 'work_history', 45, c => count(priced(c.own), b => { const d = D(b.timestamp); return d.getDay() >= 1 && d.getDay() <= 5 && d.getHours() >= 9 && d.getHours() < 16; }) >= 5),
 ];
 
 // ---- Meta badges (evaluated after everything else)
@@ -178,7 +220,7 @@ export const metaCatalog = [
 ];
 
 export const expansionItems = [...expansionCatalog, ...metaCatalog];
-export const expansionCategories = ['Timing & Precision', 'Squad Play', 'Calendar', 'Expedition', 'Wordsmith', 'Meta'];
+export const expansionCategories = ['Timing & Precision', 'Squad Play', 'Calendar', 'Expedition', 'Wordsmith', 'Market', 'Meta'];
 
 export function computeExpansionUnlocks(userId, busts, existing = [], opts = {}) {
   const all = [...busts].filter(Boolean).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));

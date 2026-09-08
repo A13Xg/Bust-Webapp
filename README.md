@@ -11,10 +11,10 @@ A real-time, mobile-first, satirical pressure-logging web app for a private crew
 - Giant BUST button with charge → explosion → note-capture sequence, SFX, and haptics
 - 2-hour cooldown enforced server-side (or by Postgres RLS in static mode)
 - Real-time group feed (WebSocket or Supabase Realtime) with toasts + web push: the crew is notified when anyone busts or unlocks an achievement, plus a staggered 5-7 day nag if you go quiet (desktop, Android, and installed iOS PWAs — see `NOTIFICATIONS.md`)
-- Environmental context per bust: temperature, barometric pressure, city (reverse-geocoded)
+- Environmental + market context per bust: temperature, barometric pressure, elevation, tide, city (reverse-geocoded), and the Bitcoin spot price at the moment you pressed the button
 - Analytics bay: leaderboard with sparklines & streaks, 30-day trend, daypart donut, hour histogram, weekly bars, weekday×hour heatmap, temp/pressure scatter with hover tooltips, all-time records
 - Operator profiles: XP levels with satirical rank titles, editable tagline, avatar re-roll, personal charts, badge showcase, permission controls
-- 100+ achievements & badges (Material Symbols icons, tier-colored cards) that auto-unlock client-side
+- 130+ achievements & badges, including a Market track keyed off the BTC price at your bust (Diamond Hands, Number Go Up, Pizza Day…) (Material Symbols icons, tier-colored cards) that auto-unlock client-side
 
 ## Running
 Local (Node API + Postgres/Supabase via `DATABASE_URL`, or `DEMO_DB=1` for in-memory):
@@ -37,6 +37,8 @@ React 19 + Vite, framer-motion, custom SVG charts, Express + `pg` (server mode),
 ## Repo map
 - `src/main.jsx` — app shell, dashboard, overlays
 - `src/rules.js` — cooldown, streaks, XP levels, records, core achievement catalog
+- `src/bitcoin.js` — BTC spot price lookup, caching, and formatting
+- `src/notifications.js`, `src/notificationMessages.js`, `public/sw.js` — web push
 - `src/expansion.js` — expansion achievement/badge catalog + evaluators
 - `src/charts.jsx` — SVG chart primitives
 - `src/backend.js` — dual-mode backend adapter (REST/WS ↔ Supabase)

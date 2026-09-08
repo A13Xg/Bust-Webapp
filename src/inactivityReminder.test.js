@@ -146,4 +146,49 @@ describe('inactivity reminder storage', () => {
     }
     expect(new Set(scheduled).size).toBe(scheduled.length);
   });
+  /*
+   * Regression: state read back from Postgres is serialised as
+   * "…12:00:00.123456+00:00", not "…12:00:00.123Z". A string comparison against
+   * Date#toISOString() is false for every such row, which silently wiped
+   * lastSentAt and re-fired the reminder on every scheduled dispatch — 144
+   * pushes a day per lapsed user at a 10-minute cadence.
+   */
+  it('preserves state across a PostgreSQL timestamptz round trip', () => {
+    const pg = '2026-08-25T12:00:00.123456+00:00';
+    const now = Date.parse('2026-09-08T12:00:00Z');
+    const state = {
+      cycleBustAt: pg,
+      scheduledFor: '2026-09-20T00:00:00+00:00',
+      lastSentAt: '2026-09-08T11:50:00+00:00',
+      lastMessageIndex: 3,
+    };
+
+    const reconciled = reconcileInactivityReminderState({ state, latestBustAt: pg, now });
+    expect(Date.parse(reconciled.lastSentAt)).toBe(Date.parse(state.lastSentAt));
+    expect(reconciled.lastMessageIndex).toBe(3);
+    expect(isInactivityReminderDue(reconciled, pg, now)).toBe(false);
+  });
+
+  it('sends a lapsed user exactly one reminder across repeated dispatch runs', () => {
+    const pg = '2026-08-25T12:00:00.123456+00:00';
+    const start = Date.parse('2026-09-08T12:00:00Z');
+    let state = { cycleBustAt: pg, scheduledFor: null, lastSentAt: null, lastMessageIndex: null };
+    let sent = 0;
+
+    // Two hours of a 10-minute cron, with the database re-serialising each write.
+    for (let tick = 0; tick < 12; tick += 1) {
+      const now = start + tick * 10 * 60 * 1000;
+      const reconciled = reconcileInactivityReminderState({ state, latestBustAt: pg, now });
+      if (isInactivityReminderDue(reconciled, pg, now)) {
+        sent += 1;
+        state = { ...markInactivityReminderSent(reconciled, { now }), cycleBustAt: pg };
+      } else {
+        state = reconciled;
+      }
+    }
+
+    expect(sent).toBe(1);
+    // The follow-up must land 5-7 days out, not minutes later.
+    expect(Date.parse(state.scheduledFor)).toBeGreaterThanOrEqual(start + FIRST_REMINDER_DELAY_MS);
+  });
 });

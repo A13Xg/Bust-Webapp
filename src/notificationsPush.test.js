@@ -160,9 +160,17 @@ describe('subscription rotation', () => {
     );
   });
 
-  it('treats an unknowable key as a match so a good subscription is never thrown away', () => {
-    expect(subscriptionKeyMismatch({ options: {} }, keyB64)).toBe(false);
+  it('keeps a subscription whose key the browser does not expose at all', () => {
+    // No `options` object: nothing to judge, so do not destroy a working subscription.
+    expect(subscriptionKeyMismatch({}, keyB64)).toBe(false);
     expect(subscriptionKeyMismatch({ options: { applicationServerKey: keyBytes.buffer } }, '')).toBe(false);
+  });
+
+  it('replaces a subscription that was created without any application server key', () => {
+    // `options` present but empty means a keyless subscription. Every VAPID-signed
+    // push to it is rejected with 403 forever, so it has to be re-created.
+    expect(subscriptionKeyMismatch({ options: {} }, keyB64)).toBe(true);
+    expect(subscriptionKeyMismatch({ options: { applicationServerKey: null } }, keyB64)).toBe(true);
   });
 
   it('resubscribes when the stored key no longer matches the build', async () => {
