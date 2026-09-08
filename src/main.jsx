@@ -254,6 +254,37 @@ function App(){ const [user,setUser]=useState(null); const [boot,setBoot]=useSta
 function Dashboard({user,setUser}){ const [busts,setBusts]=useState([]),[users,setUsers]=useState([]),[unlocks,setUnlocks]=useState([]); const [debugBusts,setDebugBusts]=useState([]),[debugUnlocks,setDebugUnlocks]=useState([]),[debugXp,setDebugXp]=useState(0); const [overlay,setOverlay]=useState(null),[selected,setSelected]=useState(null),[phase,setPhase]=useState('idle'),[pendingCtx,setPendingCtx]=useState(null),[toasts,setToasts]=useState([]),[unread,setUnread]=useState(0),[muted,setMuted]=useState(sfx.isMuted()); const bustRef=useRef([]); bustRef.current=busts; const unlocksRef=useRef([]); unlocksRef.current=unlocks; const usersRef=useRef([]); usersRef.current=users; const chargeSfx=useRef(null); const seenRealtimeEvents=useRef(new Set()); const [,tick]=useState(0);
   const { current: badgeToast, enqueue: enqueueBadge, dismiss: dismissBadge } = useAchievementQueue(5200);
   const remaining = twoHoursRemainingMs(user.last_bust_timestamp); const locked = remaining > 0 && phase==='idle';
+  /* Mirror the unread count onto the installed app icon. Supported on Android
+     and desktop Chrome/Edge and on installed iOS web apps; a no-op elsewhere,
+     and never allowed to throw into render. */
+  useEffect(() => {
+    try {
+      if (unread > 0) navigator.setAppBadge?.(unread);
+      else navigator.clearAppBadge?.();
+    } catch { /* permission or unsupported — the in-app counter still shows it */ }
+  }, [unread]);
+  /* Resolve a tapped notification to something on screen. A bust opens its
+     detail card; an achievement opens the trophy cabinet. A bust this client has
+     not loaded yet is fetched once rather than silently ignored. */
+  const openPushTarget = useCallback(async ({ kind, sourceId } = {}) => {
+    if (kind === 'achievement') { setOverlay('trophy'); return; }
+    if (kind !== 'bust' || !sourceId) return;
+    setUnread(0);
+    const known = bustRef.current.find(b => b.id === sourceId);
+    if (known) { setSelected(known); return; }
+    // A notification can outlive this tab's copy of the feed, so fetch once
+    // rather than dropping the tap.
+    try {
+      const recent = await backend.recentBusts(60);
+      setBusts(prev => {
+        const map = new Map(prev.map(b => [b.id, b]));
+        for (const bust of recent) map.set(bust.id, bust);
+        return [...map.values()].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+      });
+      const found = recent.find(b => b.id === sourceId);
+      if (found) setSelected(found); else setOverlay('alerts');
+    } catch { setOverlay('alerts'); }
+  }, []);
   /* Self-healing push. Browsers rotate, expire and evict push subscriptions with
    * no warning and no error — the app just stops receiving. Re-registering the
    * current endpoint on every launch (and whenever the tab comes back to the
@@ -273,6 +304,9 @@ function Dashboard({user,setUser}){ const [busts,setBusts]=useState([]),[users,s
       }
       // A push that arrived while the app is open still counts as unread news.
       if (data.type === 'bust-push' && data.payload?.kind === 'bust') setUnread(n => n + 1);
+      // Tapping a crew notification should land on the thing it was about, not
+      // just raise the app. The worker forwards the id it put in the payload.
+      if (data.type === 'bust-notification-click') openPushTarget(data.data || {});
     };
     navigator.serviceWorker?.addEventListener('message', onMessage);
     // The ServiceWorkerContainer message queue only starts implicitly when an
@@ -285,7 +319,7 @@ function Dashboard({user,setUser}){ const [busts,setBusts]=useState([]),[users,s
       document.removeEventListener('visibilitychange', rearm);
       navigator.serviceWorker?.removeEventListener('message', onMessage);
     };
-  }, [user.id]);
+  }, [openPushTarget, user.id]);
   /* Fallback nag loop for browsers with no push support (the server can't reach
    * them, so the open tab has to do it). Push-capable browsers get reminders
    * from dispatch-inactivity-reminders instead. */
