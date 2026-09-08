@@ -85,9 +85,17 @@ only starts implicitly when an `onmessage` property is assigned. With
 delivered, including subscription-rotation handoffs.
 
 **One endpoint, one account.** `push_subscriptions` has a unique index on
-`endpoint`, and `register-push-subscription` deletes any other account's claim on
-the same endpoint. Without that, two people sharing a browser receive each
-other's notifications.
+`endpoint`, and `register-push-subscription` upserts with `onConflict: 'endpoint'`
+so a shared browser or an account switch transfers the row to the new owner in a
+single statement. Without that, two people sharing a browser receive each other's
+notifications — and a delete-then-insert would leave a window where a concurrent
+registration hits the unique index and 500s.
+
+That upsert UPDATEs the existing row, so any column it must not inherit has to be
+in the payload explicitly. `failure_count` is reset there for that reason;
+`last_success_at` is deliberately left alone as the record of the last real
+delivery. It also means the index above is load-bearing: drop it and every
+registration fails with `42P10`.
 
 ## Deploying
 
