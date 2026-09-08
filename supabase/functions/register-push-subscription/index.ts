@@ -48,8 +48,14 @@ Deno.serve(async req => {
     // An endpoint identifies one browser profile. If it previously belonged to a
     // different account (shared device, account switch), reclaim it atomically so
     // the unique index on (endpoint) cannot race between delete + upsert.
+    //
+    // failure_count is reset explicitly: this upsert UPDATEs the existing row
+    // rather than replacing it, so without this a reclaimed (or previously
+    // flaky) endpoint would inherit a stale count and sit near the prune
+    // threshold. Having just completed pushManager.subscribe(), the endpoint is
+    // demonstrably alive.
     const { error: upsertError } = await admin.from('push_subscriptions').upsert(
-      [{ user_id: userId, endpoint, p256dh, auth, user_agent: userAgent, updated_at: nowIso }],
+      [{ user_id: userId, endpoint, p256dh, auth, user_agent: userAgent, updated_at: nowIso, failure_count: 0 }],
       { onConflict: 'endpoint' }
     );
     if (upsertError) throw new Error(upsertError.message);
