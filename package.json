@@ -15,6 +15,8 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src server scripts public/sw.js",
+    "lint:functions": "deno lint --config supabase/functions/deno.json supabase/functions",
+    "typecheck:functions": "deno check --config supabase/functions/deno.json supabase/functions/*/index.ts",
     "format:check": "prettier --check \"src/**/*.{js,jsx,css}\" \"server/**/*.js\" \"scripts/**/*.mjs\"",
     "typecheck": "tsc --noEmit",
     "db:check": "node scripts/ci-db-check.mjs",

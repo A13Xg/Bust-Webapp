@@ -5,7 +5,7 @@
  * user cannot spam the crew by replaying old ids. The push_events ledger makes
  * a retry (or a race with the cron backstop) a no-op rather than a duplicate.
  */
-import { createClient } from 'npm:@supabase/supabase-js@2';
+import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { announceAchievement, announceBust } from '../_shared/announce.ts';
 import { corsHeaders, json } from '../_shared/push.ts';
 
@@ -16,7 +16,7 @@ const MAX_EVENT_AGE_MS = 15 * 60 * 1000;
 const RATE_WINDOW_MS = 5 * 60 * 1000;
 const RATE_MAX_EVENTS = 12;
 
-async function overRateLimit(admin: ReturnType<typeof createClient>, userId: string) {
+async function overRateLimit(admin: SupabaseClient, userId: string) {
   const since = new Date(Date.now() - RATE_WINDOW_MS).toISOString();
   const { count, error } = await admin
     .from('push_events')

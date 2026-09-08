@@ -33,6 +33,16 @@ supabase secrets set VAPID_PUBLIC_KEY=... VAPID_PRIVATE_KEY=... REMINDER_CRON_SE
 
 Do not rerun only `setup.sql` and assume the database is current. The migration directory is part of the canonical schema state.
 
+## Checks
+
+```bash
+npm run lint:functions       # deno lint
+npm run typecheck:functions  # deno check, strict
+```
+
+Both run in CI and need Deno (`denoland/setup-deno`). Config lives in
+`supabase/functions/deno.json`; it affects checking only, not deployment.
+
 ## Security boundaries
 
 - Browser clients use only the anon key.

@@ -133,13 +133,31 @@ Repository secrets required by `.github/workflows/notify-cron.yml`:
 5. **OS-level settings.** macOS Focus modes, Windows Focus Assist and per-site
    notification settings all suppress delivery after the browser has accepted it.
 
-## Known coverage gaps
+## Checks
 
-`npm run lint` covers `src/`, `server/`, `scripts/` and `public/sw.js`. Nothing
-under `supabase/functions/` is linted or typechecked by any CI gate — it is Deno
-TypeScript and the repo has no Deno toolchain. Treat a green CI run as saying
-nothing about the Edge Functions; exercise them with the smoke calls above after
-any change.
+| Command | Covers |
+| --- | --- |
+| `npm run lint` | `src/`, `server/`, `scripts/`, `public/sw.js` (eslint) |
+| `npm run typecheck` | the browser app (`tsc --noEmit`) |
+| `npm run lint:functions` | `supabase/functions/` (`deno lint`) |
+| `npm run typecheck:functions` | `supabase/functions/` (`deno check`, strict) |
+| `npm test` | vitest |
+
+The Edge Functions are Deno TypeScript, so eslint and `tsc` cannot see them —
+they need Deno, configured by `supabase/functions/deno.json`. All five run in CI.
+That config is used only for checking; it does not change what
+`supabase functions deploy` uploads (verified by redeploying an unmodified
+function and confirming an identical bundle hash).
+
+Because the functions type-check under `strict`, the shared modules they import
+from `src/` carry JSDoc annotations. Those are load-bearing: drop them and the
+callbacks in `fetchAllPages` land as implicit `any` and the check fails. Note
+that a PostgREST builder is a *thenable*, not a `Promise`, so callback types must
+be `PromiseLike`.
+
+Still not covered: nothing executes the Edge Functions in CI. Type-checking will
+not catch a wrong table name or a broken RLS assumption, so exercise the smoke
+calls above after any change.
 
 ## Verifying VAPID credentials
 

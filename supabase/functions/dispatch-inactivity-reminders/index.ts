@@ -112,7 +112,11 @@ Deno.serve(async req => {
           );
           prunedSubscriptions += result.pruned;
           if (result.delivered > 0) {
-            nextState = markInactivityReminderSent(reconciled, { now, messageIndex: chosen.index });
+            // markInactivityReminderSent returns null for a state with no
+            // cycle timestamp, which reconciled cannot be here — keep the
+            // previous state rather than asserting that away.
+            const advanced = markInactivityReminderSent(reconciled, { now, messageIndex: chosen.index });
+            if (advanced) nextState = advanced;
             sentCount += 1;
           }
         }

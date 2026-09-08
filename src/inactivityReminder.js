@@ -1,5 +1,18 @@
 import { INACTIVITY_MESSAGE_CATALOG } from './notificationMessages.js';
 
+/**
+ * Persisted reminder cycle for one user. Timestamps are ISO strings; they come
+ * back from Postgres in a different serialisation than Date#toISOString, so
+ * always compare them through toEpochMs rather than as strings.
+ *
+ * @typedef {{
+ *   cycleBustAt: string | null,
+ *   scheduledFor: string | null,
+ *   lastSentAt: string | null,
+ *   lastMessageIndex: number | null,
+ * }} ReminderState
+ */
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /*
@@ -81,6 +94,10 @@ function scheduleInWindow(windowStart, windowEnd, random) {
   return isoAt(randomBetween(windowStart, windowEnd, random));
 }
 
+/**
+ * @param {{ state?: ReminderState | null, latestBustAt?: string | null, now?: number, random?: () => number }} args
+ * @returns {ReminderState | null} null when the user has never busted.
+ */
 export function reconcileInactivityReminderState({ state, latestBustAt, now = Date.now(), random = Math.random }) {
   const cycleBustMs = toEpochMs(latestBustAt);
   if (cycleBustMs == null) return null;
@@ -151,6 +168,10 @@ function chooseWeightedMessageIndex(random = Math.random) {
   return INACTIVITY_MESSAGE_CATALOG.length - 1;
 }
 
+/**
+ * @param {{ random?: () => number, lastMessageIndex?: number | null }} [options]
+ * @returns {{ index: number, text: string }}
+ */
 export function pickInactivityReminderMessage({ random = Math.random, lastMessageIndex = null } = {}) {
   if (!INACTIVITY_MESSAGE_CATALOG.length) return { index: -1, text: 'Reminder: log a bust.' };
   let index = chooseWeightedMessageIndex(random);
@@ -164,6 +185,11 @@ export function buildInactivityReminderMessage(random = Math.random, lastMessage
   return pickInactivityReminderMessage({ random, lastMessageIndex }).text;
 }
 
+/**
+ * @param {ReminderState | null | undefined} state
+ * @param {{ now?: number, random?: () => number, messageIndex?: number | null }} [options]
+ * @returns {ReminderState | null}
+ */
 export function markInactivityReminderSent(state, { now = Date.now(), random = Math.random, messageIndex = null } = {}) {
   const cycleBustMs = toEpochMs(state?.cycleBustAt);
   if (cycleBustMs == null) return state || null;
