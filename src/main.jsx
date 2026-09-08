@@ -36,6 +36,9 @@ import {
   saveInactivityReminderState,
 } from './inactivityReminder.js';
 import { useAchievementQueue } from './useAchievementQueue.js';
+import { DebugMenu } from './DebugMenu.jsx';
+import { clampMenuToViewport } from './contextMenu.js';
+import { useLongPress } from './useLongPress.js';
 
 export const asset = p => import.meta.env.BASE_URL + String(p).replace(/^\//, '');
 /* Arm web push. Returns a structured result so the UI can say *why* it failed
@@ -546,9 +549,34 @@ function PermissionControls(){
     {status&&<small style={{color:'#ffb27b'}}>{status}</small>}
     {(geo==='denied'||notif==='denied')&&<small>A blocked permission can only be re-enabled from your browser's site settings (padlock icon in the address bar).</small>}
   </div> }
-function DebugMenu({debug,onClose}){ const [form,setForm]=useState({note:'Debug bust',temp_f:'72',pressure:'1013',city:'Debug Bay',lat:'',long:'',elevation_ft:'100',tide_ft:'1.0',btc_usd:'67000',timestamp:new Date().toISOString().slice(0,16)}); const [pick,setPick]=useState(''); const set=(k,v)=>setForm(f=>({...f,[k]:v})); const unlockables=achievements.slice().sort((a,b)=>a.name.localeCompare(b.name)); return createPortal(<div className="ach-detail-back" onClick={onClose}><div className="debug-box mf-frame" onClick={e=>e.stopPropagation()}><button className="detail-close" onClick={onClose} aria-label="Close debug menu"><X/></button><h2>Debug Menu</h2><p className="showcase-hint">Session-only sandbox. Nothing here writes to the database or alerts the crew.</p><div className="debug-grid"><label>XP Override<input type="number" value={debug.xp} onChange={e=>debug.setXp(Math.max(0,Number(e.target.value)||0))}/></label><label>Time<input type="datetime-local" value={form.timestamp} onChange={e=>set('timestamp',e.target.value)}/></label><label>Temp °F<input type="number" value={form.temp_f} onChange={e=>set('temp_f',e.target.value)}/></label><label>Pressure hPa<input type="number" value={form.pressure} onChange={e=>set('pressure',e.target.value)}/></label><label>Altitude ft ASL<input type="number" value={form.elevation_ft} onChange={e=>set('elevation_ft',e.target.value)}/></label><label>Tide ft (+high/-low)<input type="number" step="0.1" value={form.tide_ft} onChange={e=>set('tide_ft',e.target.value)}/></label><label>BTC USD<input type="number" step="1" value={form.btc_usd} onChange={e=>set('btc_usd',e.target.value)}/></label><label>City<input value={form.city} onChange={e=>set('city',e.target.value)}/></label><label>Latitude<input type="number" value={form.lat} onChange={e=>set('lat',e.target.value)}/></label><label>Longitude<input type="number" value={form.long} onChange={e=>set('long',e.target.value)}/></label></div><label className="debug-note">Note<textarea value={form.note} maxLength={240} onChange={e=>set('note',e.target.value)}/></label><div className="picker-actions"><button className="mf-button" onClick={()=>debug.onBust(form)}>ADD DEBUG BUST</button></div><div className="debug-unlock"><select value={pick} onChange={e=>setPick(e.target.value)}><option value="">Select unlock visual…</option>{unlockables.map(a=><option key={a.id} value={a.id}>{a.name} · {a.kind} · {a.points} XP</option>)}</select><button className="mf-button ghost" disabled={!pick} onClick={()=>{debug.onUnlock(pick);setPick('');}}>TRIGGER UNLOCK</button></div><div className="debug-footer"><span>{debug.counts.busts} debug busts · {debug.counts.unlocks} debug unlocks · {debug.xp} debug XP</span><button className="mf-button ghost" onClick={debug.onResetCooldown}>RESET COOLDOWN OVERRIDE</button><button className="mf-button ghost danger" onClick={debug.onClear}>CLEAR DEBUG SESSION</button></div></div></div>,document.body) }
+/*
+ * The hidden debug context menu.
+ *
+ * Portalled to <body> on purpose: `.overlay` sets `backdrop-filter`, which makes
+ * it a containing block for fixed-position descendants, so nesting this inside
+ * it made left/top resolve against the overlay's scrolled box instead of the
+ * viewport — the menu opened offset by however far the profile was scrolled.
+ * It is measured first, then clamped, so it can never open off screen either.
+ */
+function DebugContextMenu({at,onClose,onOpenDebug}){
+  const ref=useRef(null); const [pos,setPos]=useState(null);
+  useEffect(()=>{
+    const box=ref.current?.getBoundingClientRect();
+    setPos(clampMenuToViewport(at.x,at.y,{width:box?.width||0,height:box?.height||0},{width:window.innerWidth,height:window.innerHeight}));
+  },[at]);
+  useEffect(()=>{
+    const onKey=e=>{ if(e.key==='Escape') onClose(); };
+    window.addEventListener('keydown',onKey);
+    window.addEventListener('resize',onClose);
+    // Capture phase: the menu is fixed to the viewport, so any scroll behind it
+    // would leave it pointing at nothing.
+    window.addEventListener('scroll',onClose,true);
+    return ()=>{ window.removeEventListener('keydown',onKey); window.removeEventListener('resize',onClose); window.removeEventListener('scroll',onClose,true); };
+  },[onClose]);
+  return createPortal(<><div className="debug-context-scrim" onClick={onClose} onContextMenu={e=>{e.preventDefault();onClose();}}/><div ref={ref} className="debug-context" role="menu" style={{left:pos?pos.left:0,top:pos?pos.top:0,visibility:pos?'visible':'hidden'}}><button role="menuitem" onClick={onOpenDebug}>Debug Menu</button><button role="menuitem" onClick={onClose}>Close</button></div></>,document.body) }
+
 function Profile({user,setUser,busts,unlocks,users,onOpen,debug,mythicIds}){
-  const [tagline,setTagline]=useState(user.tagline||''); const [saving,setSaving]=useState(false); const [saved,setSaved]=useState(false); const [showPicker,setShowPicker]=useState(false); const [confirmDel,setConfirmDel]=useState(false); const [ctx,setCtx]=useState(null); const [showDebug,setShowDebug]=useState(false);
+  const [tagline,setTagline]=useState(user.tagline||''); const [saving,setSaving]=useState(false); const [saved,setSaved]=useState(false); const [showPicker,setShowPicker]=useState(false); const [confirmDel,setConfirmDel]=useState(false); const [ctx,setCtx]=useState(null); const [showDebug,setShowDebug]=useState(false); const debugPress=useLongPress(point=>setCtx(point));
   const stats=useMemo(()=>derivePersonalStats(user.id,busts,unlocks),[user.id,busts,unlocks]);
   const own=useMemo(()=>busts.filter(b=>b.user_id===user.id),[busts,user.id]);
   const trend=useMemo(()=>buildTrend(own,30),[own]);
@@ -593,9 +621,9 @@ function Profile({user,setUser,busts,unlocks,users,onOpen,debug,mythicIds}){
     {showPicker&&<ShowcasePicker unlocked={myBadges} initial={pinned} onClose={()=>setShowPicker(false)} onApply={ids=>{ setShowPicker(false); if(ids.join(',')!==(user.showcase||'')) save({showcase:ids.join(',')}); }}/>}
     <h2 className="section-title">Recent Activity</h2>
     <div className="feed two-col">{own.length?own.slice(0,10).map(b=><BustCard key={b.id} b={b} onOpen={onOpen} mythicIds={mythicIds}/>):<EmptyState text="Your ledger is empty. The button awaits."/>}</div>
-    <div className="logout-row"><button className="mf-button ghost" onClick={async()=>{await backend.logout();setUser(null)}}><LogOut/> LOG OUT</button><button className="mf-button ghost danger" onContextMenu={e=>{ e.preventDefault(); setCtx({x:e.clientX,y:e.clientY}); }} onClick={()=>setConfirmDel(true)}>DELETE ACCOUNT</button></div>
-    {ctx&&<div className="debug-context" style={{left:ctx.x,top:ctx.y}}><button onClick={()=>{setCtx(null);setShowDebug(true);}}>Debug Menu</button><button onClick={()=>setCtx(null)}>Close</button></div>}
-    {showDebug&&debug&&<DebugMenu debug={debug} onClose={()=>setShowDebug(false)}/>}
+    <div className="logout-row"><button className="mf-button ghost" onClick={async()=>{await backend.logout();setUser(null)}}><LogOut/> LOG OUT</button><button className="mf-button ghost danger no-callout" {...debugPress.handlers} onContextMenu={e=>{ e.preventDefault(); setCtx({x:e.clientX,y:e.clientY}); }} onClick={()=>{ if(debugPress.consumeClick()) return; setConfirmDel(true); }}>DELETE ACCOUNT</button></div>
+    {ctx&&<DebugContextMenu at={ctx} onClose={()=>setCtx(null)} onOpenDebug={()=>{setCtx(null);setShowDebug(true);}}/>}
+    {showDebug&&debug&&<DebugMenu debug={debug} username={user.username} logoSrc={asset('bust-logo.png')} onClose={()=>setShowDebug(false)}/>}
     {confirmDel&&<DeleteAccountModal onClose={()=>setConfirmDel(false)} onDeleted={()=>setUser(null)}/>}
   </div> }
 function Alerts({busts,onOpen,mythicIds}){ return <div className="feed two-col">{busts.map(b=><BustCard key={b.id} b={b} onOpen={onOpen} mythicIds={mythicIds}/>)}</div> }

@@ -331,3 +331,65 @@ img,svg,canvas{max-width:100%}
 .error-boundary{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px;text-align:center}
 .error-boundary h2{font-size:clamp(18px,4vw,28px);font-weight:900}
 .error-boundary p{color:var(--muted);max-width:480px}
+
+/* ---------------------------------------------------------------------------
+ * Trophy action: `.icon-btn` is a fixed 48px single-column grid, which stacked
+ * the icon above the count and grew the button vertically. Lay it out as a row
+ * and let it size to its content instead.
+ * ------------------------------------------------------------------------- */
+.trophy-action{display:flex;flex-direction:row;align-items:center;justify-content:center;gap:8px;width:auto;min-width:0;height:48px;padding:0 14px}
+.trophy-action svg{flex:none;width:22px;height:22px}
+.trophy-action small{font:900 14px Tahoma,sans-serif;color:var(--orange);line-height:1}
+
+/* Debug menu tabs */
+.debug-tabs{display:flex;flex-wrap:wrap;gap:6px;border-bottom:1px solid var(--line);padding-bottom:10px}
+.debug-tabs button{background:transparent;border:1px solid transparent;color:var(--muted);padding:8px 12px;font:900 11px Tahoma,sans-serif;letter-spacing:2px}
+.debug-tabs button:hover{color:var(--ink)}
+.debug-tabs button.active{color:var(--orange);border-color:rgba(255,94,0,.45);background:rgba(255,94,0,.10)}
+.debug-panel{display:grid;gap:14px}
+.debug-note input{background:#09090b;border:1px solid var(--line);color:var(--ink);padding:11px;font:800 14px Tahoma,sans-serif;outline:0;text-transform:none;letter-spacing:0}
+.debug-note input:focus,.debug-note textarea:focus{border-color:var(--orange)}
+.danger-hint{color:#ff8a80}
+.danger-hint strong{color:#ff6a55}
+
+/* Broadcast composer */
+.token-sheet{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.token-sheet .mf-kicker{width:100%}
+.token-chip{display:inline-flex;align-items:baseline;gap:7px;max-width:100%;background:#09090b;border:1px solid var(--line);color:var(--ink);padding:7px 10px;text-align:left}
+.token-chip:hover{border-color:rgba(255,94,0,.5)}
+.token-chip code{color:var(--orange);font:900 12px IBM Plex Mono,monospace}
+.token-chip em{color:var(--muted);font-style:normal;font:700 11px Tahoma,sans-serif}
+.broadcast-preview{display:grid;gap:6px;background:#09090b;border:1px solid var(--line);border-left:3px solid var(--orange);padding:14px}
+.broadcast-preview strong{font-size:16px}
+.broadcast-preview p{margin:0;color:var(--muted);font-weight:700}
+.broadcast-preview small{color:var(--muted);font:700 11px Tahoma,sans-serif}
+.broadcast-warn{margin:0;color:#ff8a80;font:800 12px Tahoma,sans-serif}
+.broadcast-ok{margin:0;color:var(--orange);font:800 12px Tahoma,sans-serif}
+
+/* Shared confirm sheet (sits above the debug menu at z-index 96) */
+.confirm-back{position:fixed;inset:0;z-index:125;background:rgba(0,0,0,.8);display:grid;place-items:center;padding:18px}
+.confirm-box{width:min(460px,94vw);padding:26px;display:grid;gap:14px}
+.confirm-box h2{margin:0}
+.confirm-box p{margin:0;color:var(--muted);font-weight:700}
+
+/* Lightbox: the picture and an orange X, nothing else. Above everything. */
+.lightbox-back{position:fixed;inset:0;z-index:130;background:rgba(6,6,7,.94);display:grid;place-items:center;padding:24px}
+.lightbox-img{max-width:min(94vw,1100px);max-height:86vh;object-fit:contain;display:block}
+.lightbox-close{position:fixed;z-index:131;right:22px;top:22px;width:48px;height:48px;background:var(--orange);border:0;color:#160700;display:grid;place-items:center;clip-path:polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px)}
+.lightbox-close svg{width:23px;height:23px}
+
+/* Context menu: invisible dismiss layer, so a tap anywhere closes it */
+.debug-context-scrim{position:fixed;inset:0;z-index:109}
+/* Stop iOS answering a long press with its own selection/callout UI, which is
+ * what swallowed the gesture and highlighted the button text instead. */
+.no-callout{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;touch-action:manipulation}
+
+@media(max-width:700px){
+  .trophy-action{padding:0 11px;height:44px}
+  .trophy-action svg{width:20px;height:20px}
+  .trophy-action small{font-size:13px}
+  .debug-tabs button{padding:7px 9px;letter-spacing:1px}
+  .token-chip em{display:none}
+  .lightbox-close{right:14px;top:14px}
+  .lightbox-back{padding:14px}
+}
