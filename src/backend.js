@@ -37,6 +37,8 @@ const serverBackend = {
   async registerPushSubscription(subscription, meta = {}) {
     return await rest('/push-subscriptions', { method: 'POST', body: JSON.stringify({ subscription, ...meta }) });
   },
+  // Server mode has no VAPID sender; the open tab notifies locally instead.
+  async notifyEvent() { return { ok: false, reason: 'unsupported_in_server_mode' }; },
   webPushPublicKey() { return WEB_PUSH_PUBLIC_KEY; },
   async patchProfile(patch) { return (await rest('/profile', { method: 'PATCH', body: JSON.stringify(patch) })).user; },
   subscribe({ onBust, onProfile, onStatus }) {
@@ -195,6 +197,17 @@ const staticBackend = {
       body: { subscription, ...meta },
     });
     if (error) throw new Error(error.message || 'Push subscription registration failed');
+    if (data?.error) throw new Error(data.error);
+    return data || { ok: true };
+  },
+  /* Announce one of the caller's own rows to the rest of the crew. Fire-and-forget
+   * from the caller's perspective: dispatch-push-backstop re-sends anything this
+   * call loses, and the push_events ledger stops it arriving twice. */
+  async notifyEvent(kind, id) {
+    if (!kind || !id) return { ok: false, reason: 'missing_event' };
+    const sb = await getSupa();
+    const { data, error } = await sb.functions.invoke('notify-event', { body: { kind, id } });
+    if (error) throw new Error(error.message || 'Crew notification failed');
     if (data?.error) throw new Error(data.error);
     return data || { ok: true };
   },

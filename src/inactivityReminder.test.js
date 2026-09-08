@@ -115,11 +115,35 @@ describe('inactivity reminder storage', () => {
 
   it('avoids immediately repeating the previous reminder message', () => {
     const previousIndex = INACTIVITY_MESSAGE_CATALOG.findIndex(item =>
-      item.text.includes('cooldown ended hours ago')
+      item.text.includes('cooldown ended days ago')
     );
     const selected = pickInactivityReminderMessage({ random: () => 0, lastMessageIndex: previousIndex });
     expect(selected.index).not.toBe(previousIndex);
     expect(typeof selected.text).toBe('string');
     expect(selected.text.length).toBeGreaterThan(0);
+  });
+  it('staggers reminders across a 5-7 day window measured from the last bust', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    expect(FIRST_REMINDER_DELAY_MS).toBe(5 * DAY);
+    expect(MIN_REMINDER_INTERVAL_MS).toBe(5 * DAY);
+    expect(FIRST_REMINDER_DELAY_MS + REMINDER_WINDOW_MS).toBe(7 * DAY);
+
+    // Different users with the same last bust must not all fire at once.
+    const bustMs = Date.parse('2026-01-01T00:00:00.000Z');
+    const scheduled = [0.01, 0.25, 0.5, 0.75, 0.99].map(roll =>
+      Date.parse(
+        reconcileInactivityReminderState({
+          state: null,
+          latestBustAt: iso(bustMs),
+          now: bustMs,
+          random: () => roll,
+        }).scheduledFor
+      )
+    );
+    for (const at of scheduled) {
+      expect(at).toBeGreaterThanOrEqual(bustMs + 5 * DAY);
+      expect(at).toBeLessThanOrEqual(bustMs + 7 * DAY);
+    }
+    expect(new Set(scheduled).size).toBe(scheduled.length);
   });
 });

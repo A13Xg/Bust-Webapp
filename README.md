@@ -10,7 +10,7 @@ A real-time, mobile-first, satirical pressure-logging web app for a private crew
 ## Features
 - Giant BUST button with charge → explosion → note-capture sequence, SFX, and haptics
 - 2-hour cooldown enforced server-side (or by Postgres RLS in static mode)
-- Real-time group feed (WebSocket or Supabase Realtime) with toasts + system notifications
+- Real-time group feed (WebSocket or Supabase Realtime) with toasts + web push: the crew is notified when anyone busts or unlocks an achievement, plus a staggered 5-7 day nag if you go quiet (desktop, Android, and installed iOS PWAs — see `NOTIFICATIONS.md`)
 - Environmental context per bust: temperature, barometric pressure, city (reverse-geocoded)
 - Analytics bay: leaderboard with sparklines & streaks, 30-day trend, daypart donut, hour histogram, weekly bars, weekday×hour heatmap, temp/pressure scatter with hover tooltips, all-time records
 - Operator profiles: XP levels with satirical rank titles, editable tagline, avatar re-roll, personal charts, badge showcase, permission controls
@@ -43,4 +43,5 @@ React 19 + Vite, framer-motion, custom SVG charts, Express + `pg` (server mode),
 - `src/audio.js` — SFX manager
 - `server/` — Express API, schema, migration
 - `supabase/setup.sql` — static-mode tables, RLS, realtime
-- `ACHIEVEMENTS_PLAN.md`, `ASSETS.md`, `DEPLOY.md` — design docs
+- `supabase/functions/` — Edge Functions (achievement reconciliation, push registration and dispatch)
+- `ACHIEVEMENTS_PLAN.md`, `ASSETS.md`, `DEPLOY.md`, `NOTIFICATIONS.md` — design docs

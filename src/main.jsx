@@ -14,14 +14,17 @@ import tideStations from './tide-stations.json';
 import { ErrorBoundary } from './ErrorBoundary.jsx';
 import {
   closePermissionPrompt,
+  detectPushPlatform,
+  enablePushNotifications as armPushNotifications,
   getNotificationPermission,
   markSeenEvent,
+  pushBlockedReason,
+  PUSH_REASON_MESSAGE,
   registerPushServiceWorker,
-  requestNotificationPermission,
-  sendBrowserNotification,
-  subscribeToWebPush,
+  showNotification,
   supportsWebPush,
 } from './notifications.js';
+import { buildBustNotification } from './notificationMessages.js';
 import {
   isInactivityReminderDue,
   loadInactivityReminderState,
@@ -34,19 +37,34 @@ import {
 import { useAchievementQueue } from './useAchievementQueue.js';
 
 export const asset = p => import.meta.env.BASE_URL + String(p).replace(/^\//, '');
-async function enablePushNotifications() {
-  const permission = await requestNotificationPermission();
-  if (permission !== 'granted') return permission;
-  if (!supportsWebPush()) return permission;
-  const registration = await registerPushServiceWorker(navigator, asset('sw.js'));
-  if (!registration) return permission;
-  const subscription = await subscribeToWebPush({
-    serviceWorkerRegistration: registration,
-    vapidPublicKey: backend.webPushPublicKey?.(),
-  });
-  if (!subscription) return permission;
-  await backend.registerPushSubscription?.(subscription, { userAgent: navigator.userAgent || null });
-  return permission;
+/* Arm web push. Returns a structured result so the UI can say *why* it failed
+ * instead of showing a green light over a subscription that was never stored. */
+function enablePushNotifications({ interactive = true, sendTest = false } = {}) {
+  return armPushNotifications({ backend, workerPath: asset('sw.js'), interactive, sendTest });
+}
+
+/* Push subscriptions expire, get rotated, and get evicted without warning. Any
+ * time the app is open with permission already granted we re-register the
+ * current endpoint, which is what stops delivery from dying permanently. */
+async function rearmPushSilently() {
+  if (getNotificationPermission() !== 'granted' || !supportsWebPush()) return null;
+  try {
+    const outcome = await enablePushNotifications({ interactive: false });
+    if (!outcome.ok) console.warn('[push] re-arm failed:', outcome.reason, outcome.detail || '');
+    return outcome;
+  } catch (error) {
+    console.warn('[push] re-arm threw', error);
+    return null;
+  }
+}
+
+/* Tell the backend to fan a just-created row out to the rest of the crew. Never
+ * throws into the caller: dispatch-push-backstop re-sends anything lost here. */
+function announceToCrew(kind, id) {
+  if (!id) return;
+  Promise.resolve(backend.notifyEvent?.(kind, id)).catch(error =>
+    console.warn('[push] crew announcement failed', kind, id, error?.message || error)
+  );
 }
 function avatar(seed) { return `https://api.dicebear.com/9.x/identicon/svg?seed=${encodeURIComponent(seed || 'bust')}&backgroundColor=0a0a0b&rowColor=ff5e00,f5f0e8`; }
 function fmt(ts) { return new Date(ts).toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }); }
@@ -177,6 +195,9 @@ function PermissionGate(){
   const [show,setShow]=useState(false);
   const [notif,setNotif]=useState(getNotificationPermission());
   const [geo,setGeo]=useState('checking');
+  const [busy,setBusy]=useState(false);
+  // Non-null whenever push could not be armed; surfaced verbatim to the user.
+  const [pushNote,setPushNote]=useState(()=>{ const blocked=pushBlockedReason(detectPushPlatform()); return blocked?PUSH_REASON_MESSAGE[blocked]:null; });
   useEffect(()=>{ let alive=true; (async()=>{
       let g='prompt';
       try{ const r=await navigator.permissions.query({name:'geolocation'}); g=r.state; r.onchange=()=>{ if(alive) setGeo(r.state); }; }catch{}
@@ -195,7 +216,16 @@ function PermissionGate(){
       p=>{ localStorage.setItem('bust_geo',JSON.stringify({lat:p.coords.latitude,long:p.coords.longitude,altitude:p.coords.altitude,at:Date.now()})); setGeo('granted'); },
       ()=>setGeo(g=>g==='granted'?g:'denied'),{timeout:20000});
   },[show]);
-  async function askNotifications(){ setNotif(await enablePushNotifications()); }
+  async function askNotifications(){
+    setBusy(true);
+    try{
+      const outcome=await enablePushNotifications();
+      setNotif(outcome.ok?'granted':(outcome.permission||getNotificationPermission()));
+      // Never report success for a permission grant that produced no subscription.
+      setPushNote(outcome.ok?null:(outcome.detail?`${outcome.message} (${outcome.detail})`:outcome.message));
+    }catch(e){ setPushNote(String(e?.message||e)); }
+    finally{ setBusy(false); }
+  }
   if(!show) return null;
   const lbl=v=>({granted:'ENABLED',denied:'BLOCKED',default:'WAITING…',prompt:'NOT YET',checking:'…',unsupported:'N/A'}[v]||v);
   return createPortal(<div className="ach-detail-back"><div className="picker-box confirm-box mf-frame">
@@ -206,7 +236,8 @@ function PermissionGate(){
       <span className={geo==='granted'?'ok':''}><MapPin/> FIND MY LAIR · {lbl(geo)}</span>
       <span className={notif==='granted'?'ok':''}><Bell/> PING ME, COACH · {lbl(notif)}</span>
     </div>
-    {notif!=='granted'&&notif!=='unsupported'&&<button className="mf-button ghost" onClick={askNotifications} style={{marginBottom:'8px'}}>ENABLE NOTIFICATIONS</button>}
+    {notif!=='granted'&&notif!=='unsupported'&&<button className="mf-button ghost" disabled={busy} onClick={askNotifications} style={{marginBottom:'8px'}}>{busy?'ARMING…':'ENABLE NOTIFICATIONS'}</button>}
+    {pushNote&&<small className="showcase-hint" style={{color:'#ffb27b'}}>{pushNote}</small>}
     {(geo==='denied'||notif==='denied')&&<small className="showcase-hint">Blocked? Click the padlock in the address bar to re-enable, then hit OKAY.</small>}
     <div className="picker-actions"><button className="mf-button" onClick={()=>closePermissionPrompt(sessionStorage, ()=>setShow(false))}>OKAY</button></div>
   </div></div>,document.body) }
@@ -222,6 +253,36 @@ function App(){ const [user,setUser]=useState(null); const [boot,setBoot]=useSta
 function Dashboard({user,setUser}){ const [busts,setBusts]=useState([]),[users,setUsers]=useState([]),[unlocks,setUnlocks]=useState([]); const [debugBusts,setDebugBusts]=useState([]),[debugUnlocks,setDebugUnlocks]=useState([]),[debugXp,setDebugXp]=useState(0); const [overlay,setOverlay]=useState(null),[selected,setSelected]=useState(null),[phase,setPhase]=useState('idle'),[pendingCtx,setPendingCtx]=useState(null),[toasts,setToasts]=useState([]),[unread,setUnread]=useState(0),[muted,setMuted]=useState(sfx.isMuted()); const bustRef=useRef([]); bustRef.current=busts; const unlocksRef=useRef([]); unlocksRef.current=unlocks; const usersRef=useRef([]); usersRef.current=users; const chargeSfx=useRef(null); const seenRealtimeEvents=useRef(new Set()); const [,tick]=useState(0);
   const { current: badgeToast, enqueue: enqueueBadge, dismiss: dismissBadge } = useAchievementQueue(5200);
   const remaining = twoHoursRemainingMs(user.last_bust_timestamp); const locked = remaining > 0 && phase==='idle';
+  /* Self-healing push. Browsers rotate, expire and evict push subscriptions with
+   * no warning and no error — the app just stops receiving. Re-registering the
+   * current endpoint on every launch (and whenever the tab comes back to the
+   * foreground) turns that permanent failure into at most one missed cycle.
+   * The service worker also reports rotations it handled while we were away. */
+  useEffect(() => {
+    if (!supportsWebPush()) return;
+    let closed = false;
+    const rearm = () => { if (!closed && document.visibilityState === 'visible') void rearmPushSilently(); };
+    void rearmPushSilently();
+    document.addEventListener('visibilitychange', rearm);
+    const onMessage = event => {
+      const data = event.data || {};
+      if (data.type === 'bust-push-resubscribed' && data.subscription) {
+        void backend.registerPushSubscription?.(data.subscription, { userAgent: navigator.userAgent || null })
+          .catch(error => console.warn('[push] resubscribe handoff failed', error));
+      }
+      // A push that arrived while the app is open still counts as unread news.
+      if (data.type === 'bust-push' && data.payload?.kind === 'bust') setUnread(n => n + 1);
+    };
+    navigator.serviceWorker?.addEventListener('message', onMessage);
+    return () => {
+      closed = true;
+      document.removeEventListener('visibilitychange', rearm);
+      navigator.serviceWorker?.removeEventListener('message', onMessage);
+    };
+  }, [user.id]);
+  /* Fallback nag loop for browsers with no push support (the server can't reach
+   * them, so the open tab has to do it). Push-capable browsers get reminders
+   * from dispatch-inactivity-reminders instead. */
   useEffect(() => {
     if (supportsWebPush()) return;
     let closed = false;
@@ -235,7 +296,7 @@ function Dashboard({user,setUser}){ const [busts,setBusts]=useState([]),[users,s
       let nextState = reconciled;
       if (isInactivityReminderDue(reconciled, user.last_bust_timestamp, now) && getNotificationPermission() === 'granted') {
         const chosen = pickInactivityReminderMessage({ lastMessageIndex: reconciled.lastMessageIndex });
-        const sent = await sendBrowserNotification('BUST Inactivity Reminder', { body: chosen.text, tag: `bust-inactivity-${user.id}` });
+        const sent = await showNotification('BUST is waiting', { body: chosen.text, tag: `bust-inactivity-${user.id}` }, { baseUrl: asset('') });
         if (sent) {
           const sentAt = Date.now();
           nextState = markInactivityReminderSent(reconciled, { now: sentAt, messageIndex: chosen.index });
@@ -264,12 +325,18 @@ function Dashboard({user,setUser}){ const [busts,setBusts]=useState([]),[users,s
     setUnlocks(allAchievements);
     const after = userAchievementSet(allAchievements);
     const newlyPersisted = allNew.filter(id => after.has(id) && !before.has(id));
+    // Tell the crew about each freshly minted badge. The ledger in push_events
+    // makes a repeat reconciliation a no-op rather than a second round of pings.
+    const newTypes = new Set(newlyPersisted);
+    for (const row of allAchievements) {
+      if (row.user_id === user.id && newTypes.has(row.achievement_type)) announceToCrew('achievement', row.id);
+    }
     const displayItems = capUnlocksPerBust(newlyPersisted).map(id => achievements.find(a => a.id === id)).filter(Boolean);
     if (displayItems.length) {
       enqueueBadge(displayItems);
       sfx.play('badge', {volume:.85});
     }
-  }, [enqueueBadge, userAchievementSet]);
+  }, [enqueueBadge, user.id, userAchievementSet]);
   const mergeRecentBusts = useCallback((recent = []) => {
     if (!Array.isArray(recent) || !recent.length) return;
     setBusts(prev => {
@@ -300,7 +367,20 @@ function Dashboard({user,setUser}){ const [busts,setBusts]=useState([]),[users,s
         setBusts(prev=>[bust,...prev.filter(b=>b.id!==bust.id)]); setSelected(prev=>prev?.id===bust.id?{...prev,...bust}:prev); setUsers(prev=>prev.map(u=>u.id===bust.user_id?{...u,last_bust_timestamp:bust.timestamp}:u));
         if (eventType === 'created' && bust.user_id === user.id) setUser(prev => prev ? { ...prev, last_bust_timestamp: bust.timestamp } : prev);
         // Only show toast + increment unread for new busts from OTHER users; not for note edits.
-        if(bust.user_id!==user.id && eventType==='created'){ setUnread(n=>n+1); setToasts(t=>[{id:crypto.randomUUID(),bust},...t]); void sendBrowserNotification(`${bust.username} logged a BUST`, { body: bust.note || 'Pressure event received.', tag: `bust-${bust.id}` }); }
+        if(bust.user_id!==user.id && eventType==='created'){
+          setUnread(n=>n+1);
+          setToasts(t=>[{id:crypto.randomUUID(),bust},...t]);
+          // Same copy the push path uses, so an alert never reads differently
+          // depending on whether realtime or web push delivered it first. The
+          // shared tag collapses the pair into one notification.
+          // Only when the app is not on screen. If you are looking at it, the
+          // in-app toast already told you, and a system banner on top of the
+          // incoming web push would just be the same news twice.
+          if(document.visibilityState!=='visible'){
+            const copy=buildBustNotification({username:bust.username,note:bust.note,bustId:bust.id,city:bust.city});
+            void showNotification(copy.title,{ body: copy.body, tag: copy.tag, renotify: false },{ baseUrl: asset('') });
+          }
+        }
       },
       onProfile: p=>{ setUsers(prev=>prev.map(u=>u.id===p.id?{...u,...p}:u)); },
       onStatus: async status => {
@@ -317,6 +397,7 @@ function Dashboard({user,setUser}){ const [busts,setBusts]=useState([]),[users,s
       // Compute ALL earned achievements — no presentation cap — then persist.
       // Reconciliation runs after the bust is already committed/shown, so a failure here
       // (e.g. an unreachable Edge Function) can't be mistaken for a failed bust submission.
+      announceToCrew('bust', bust.id);
       const allNew=computeAchievementUnlocks(bust.user_id,current,unlocksRef.current,{createdAt:user.created_at,userCount:usersRef.current.length});
       try{ await persistAndShowUnlocks(allNew); }catch(e){ console.error('Achievement reconciliation failed', e); }
     }catch(e){ alert(e.message); }
@@ -354,6 +435,8 @@ function Metric({icon,label,value,sub}){return <div className="metric">{icon}<sm
 function PermissionControls(){
   const [notif,setNotif]=useState(getNotificationPermission());
   const [geo,setGeo]=useState('unknown');
+  const [busy,setBusy]=useState(false);
+  const [status,setStatus]=useState(()=>{ const blocked=pushBlockedReason(detectPushPlatform()); return blocked?PUSH_REASON_MESSAGE[blocked]:null; });
   useEffect(()=>{
     navigator.permissions?.query({name:'geolocation'}).then(r=>{ setGeo(r.state); r.onchange=()=>setGeo(r.state); }).catch(()=>{});
     const syncNotif=()=>setNotif(getNotificationPermission());
@@ -361,7 +444,33 @@ function PermissionControls(){
     window.addEventListener('focus', syncNotif);
     return ()=>window.removeEventListener('focus', syncNotif);
   },[]);
-  async function askNotif(){ setNotif(await enablePushNotifications()); }
+  async function askNotif(){
+    setBusy(true);
+    try{
+      const outcome=await enablePushNotifications();
+      setNotif(outcome.ok?'granted':(outcome.permission||getNotificationPermission()));
+      setStatus(outcome.ok?'Push armed. Try SEND TEST PING.':(outcome.detail?`${outcome.message} (${outcome.detail})`:outcome.message));
+    }catch(e){ setStatus(String(e?.message||e)); }
+    finally{ setBusy(false); }
+  }
+  /* Round-trips a real push through VAPID signing, the OS push service, and the
+   * service worker. If this lands, every other notification path will too. */
+  async function sendTestPing(){
+    setBusy(true);
+    setStatus('Sending…');
+    try{
+      const outcome=await enablePushNotifications({ sendTest:true });
+      if(!outcome.ok){ setStatus(outcome.detail?`${outcome.message} (${outcome.detail})`:outcome.message); return; }
+      const res=outcome.server;
+      if(res?.test?.delivered>0){ setStatus('Test push accepted by your push service. It should arrive within a few seconds.'); return; }
+      // Server-mode builds have no VAPID sender; prove the service worker path instead.
+      const shown=await showNotification('BUST test ping',{ body:'Local notification path is working.', tag:'bust-test-local' },{ baseUrl: asset('') });
+      setStatus(shown
+        ? 'Server push unavailable, but your browser can display notifications.'
+        : (res?.test?.failures?.[0] || 'Could not display a notification. Check OS-level notification settings for your browser.'));
+    }catch(e){ setStatus(String(e?.message||e)); }
+    finally{ setBusy(false); }
+  }
   function askGeo(){ if(!navigator.geolocation){ setGeo('unsupported'); return; } localStorage.removeItem('bust_geo'); navigator.geolocation.getCurrentPosition(
     p=>{ localStorage.setItem('bust_geo',JSON.stringify({lat:p.coords.latitude,long:p.coords.longitude,altitude:p.coords.altitude,at:Date.now()})); setGeo('granted'); },
     ()=>setGeo('denied'),{timeout:8000}); }
@@ -370,8 +479,10 @@ function PermissionControls(){
     <span className="perm-title">DEVICE PERMISSIONS</span>
     <div>
       <button type="button" className="mf-button ghost" onClick={askGeo}><MapPin/> FIND MY LAIR · {label(geo)}</button>
-      <button type="button" className="mf-button ghost" onClick={askNotif}><Bell/> PING ME, COACH · {label(notif)}</button>
+      <button type="button" className="mf-button ghost" disabled={busy} onClick={askNotif}><Bell/> PING ME, COACH · {label(notif)}</button>
+      <button type="button" className="mf-button ghost" disabled={busy||notif==='unsupported'} onClick={sendTestPing}><Bell/> SEND TEST PING</button>
     </div>
+    {status&&<small style={{color:'#ffb27b'}}>{status}</small>}
     {(geo==='denied'||notif==='denied')&&<small>A blocked permission can only be re-enabled from your browser's site settings (padlock icon in the address bar).</small>}
   </div> }
 function DebugMenu({debug,onClose}){ const [form,setForm]=useState({note:'Debug bust',temp_f:'72',pressure:'1013',city:'Debug Bay',lat:'',long:'',elevation_ft:'100',tide_ft:'1.0',timestamp:new Date().toISOString().slice(0,16)}); const [pick,setPick]=useState(''); const set=(k,v)=>setForm(f=>({...f,[k]:v})); const unlockables=achievements.slice().sort((a,b)=>a.name.localeCompare(b.name)); return createPortal(<div className="ach-detail-back" onClick={onClose}><div className="debug-box mf-frame" onClick={e=>e.stopPropagation()}><button className="detail-close" onClick={onClose} aria-label="Close debug menu"><X/></button><h2>Debug Menu</h2><p className="showcase-hint">Session-only sandbox. Nothing here writes to the database or alerts the crew.</p><div className="debug-grid"><label>XP Override<input type="number" value={debug.xp} onChange={e=>debug.setXp(Math.max(0,Number(e.target.value)||0))}/></label><label>Time<input type="datetime-local" value={form.timestamp} onChange={e=>set('timestamp',e.target.value)}/></label><label>Temp °F<input type="number" value={form.temp_f} onChange={e=>set('temp_f',e.target.value)}/></label><label>Pressure hPa<input type="number" value={form.pressure} onChange={e=>set('pressure',e.target.value)}/></label><label>Altitude ft ASL<input type="number" value={form.elevation_ft} onChange={e=>set('elevation_ft',e.target.value)}/></label><label>Tide ft (+high/-low)<input type="number" step="0.1" value={form.tide_ft} onChange={e=>set('tide_ft',e.target.value)}/></label><label>City<input value={form.city} onChange={e=>set('city',e.target.value)}/></label><label>Latitude<input type="number" value={form.lat} onChange={e=>set('lat',e.target.value)}/></label><label>Longitude<input type="number" value={form.long} onChange={e=>set('long',e.target.value)}/></label></div><label className="debug-note">Note<textarea value={form.note} maxLength={240} onChange={e=>set('note',e.target.value)}/></label><div className="picker-actions"><button className="mf-button" onClick={()=>debug.onBust(form)}>ADD DEBUG BUST</button></div><div className="debug-unlock"><select value={pick} onChange={e=>setPick(e.target.value)}><option value="">Select unlock visual…</option>{unlockables.map(a=><option key={a.id} value={a.id}>{a.name} · {a.kind} · {a.points} XP</option>)}</select><button className="mf-button ghost" disabled={!pick} onClick={()=>{debug.onUnlock(pick);setPick('');}}>TRIGGER UNLOCK</button></div><div className="debug-footer"><span>{debug.counts.busts} debug busts · {debug.counts.unlocks} debug unlocks · {debug.xp} debug XP</span><button className="mf-button ghost" onClick={debug.onResetCooldown}>RESET COOLDOWN OVERRIDE</button><button className="mf-button ghost danger" onClick={debug.onClear}>CLEAR DEBUG SESSION</button></div></div></div>,document.body) }

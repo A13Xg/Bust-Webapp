@@ -1,20 +1,17 @@
-const HOUR_MS = 60 * 60 * 1000;
-export const FIRST_REMINDER_DELAY_MS = 52 * HOUR_MS;
-export const REMINDER_WINDOW_MS = 24 * HOUR_MS;
-export const MIN_REMINDER_INTERVAL_MS = 24 * HOUR_MS;
+import { INACTIVITY_MESSAGE_CATALOG } from './notificationMessages.js';
 
-export const INACTIVITY_MESSAGE_CATALOG = [
-  { text: 'Your cooldown ended hours ago. At this point, the inactivity appears deliberate.', weight: 5 },
-  { text: 'Impressive discipline. In all the wrong places.', weight: 4 },
-  { text: 'The BUST button misses you more than it should.', weight: 4 },
-  { text: 'Still no bust. Bold strategy for a pressure logger.', weight: 4 },
-  { text: 'Mission update: absolutely nothing has happened because of you.', weight: 4 },
-  { text: 'You have achieved peak inactivity. Congratulations, I guess.', weight: 2 },
-  { text: 'The crew is waiting. Your excuses are on schedule, at least.', weight: 2 },
-  { text: 'Reminder: this app works better when you actually bust.', weight: 2 },
-  { text: 'Your silence has been logged as tactical procrastination.', weight: 2 },
-  { text: 'Your inactivity streak is becoming your strongest stat.', weight: 2 },
-];
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/*
+ * Cadence: the first nag lands 5-7 days after a user's last bust, and every
+ * follow-up re-rolls another 5-7 days out. The window is randomized per user so
+ * the whole crew is not pinged in lockstep.
+ */
+export const FIRST_REMINDER_DELAY_MS = 5 * DAY_MS;
+export const REMINDER_WINDOW_MS = 2 * DAY_MS;
+export const MIN_REMINDER_INTERVAL_MS = 5 * DAY_MS;
+
+export { INACTIVITY_MESSAGE_CATALOG };
 
 function toEpochMs(value) {
   if (value == null || value === '') return null;

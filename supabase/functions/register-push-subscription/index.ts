@@ -1,17 +1,18 @@
+/*
+ * register-push-subscription — stores the caller's browser push endpoint.
+ *
+ * Called every time the app starts with notifications granted, not just when the
+ * user first opts in, because browsers rotate and drop subscriptions silently.
+ * Re-registering on every launch is what makes push survive the rotation that
+ * otherwise ends delivery for good.
+ *
+ * Pass { sendTest: true } to have the server immediately push to the endpoint it
+ * just stored. That exercises VAPID signing, the push service, and the service
+ * worker in one round trip, so "did it actually work" has a real answer.
+ */
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { reconcileInactivityReminderState } from '../../../src/inactivityReminder.js';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
-
-function json(status: number, payload: unknown) {
-  return new Response(JSON.stringify(payload), {
-    status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-  });
-}
+import { corsHeaders, json, sendToSubscriptions } from '../_shared/push.ts';
 
 Deno.serve(async req => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -42,12 +43,27 @@ Deno.serve(async req => {
     const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
     const userId = authData.user.id;
     const userAgent = typeof payload?.userAgent === 'string' ? payload.userAgent.slice(0, 256) : null;
+    const nowIso = new Date().toISOString();
 
-    const [upsertResult, profileResult, reminderStateResult] = await Promise.all([
-      admin.from('push_subscriptions').upsert(
-        [{ user_id: userId, endpoint, p256dh, auth, user_agent: userAgent }],
-        { onConflict: 'user_id,endpoint' }
-      ),
+    // An endpoint identifies one browser profile. If it previously belonged to a
+    // different account (shared device, account switch), that claim is stale and
+    // must go, or the previous owner keeps receiving this user's notifications.
+    const { error: reclaimError } = await admin
+      .from('push_subscriptions')
+      .delete()
+      .eq('endpoint', endpoint)
+      .neq('user_id', userId);
+    if (reclaimError) throw new Error(reclaimError.message);
+
+    const { error: upsertError } = await admin.from('push_subscriptions').upsert(
+      [{ user_id: userId, endpoint, p256dh, auth, user_agent: userAgent, updated_at: nowIso }],
+      { onConflict: 'user_id,endpoint' }
+    );
+    if (upsertError) throw new Error(upsertError.message);
+
+    // Keep the reminder cycle in sync so a newly armed device is not immediately
+    // nagged (or skipped) because its schedule was never initialised.
+    const [profileResult, reminderStateResult] = await Promise.all([
       admin.from('profiles').select('last_bust_timestamp').eq('id', userId).single(),
       admin
         .from('inactivity_reminders')
@@ -55,7 +71,6 @@ Deno.serve(async req => {
         .eq('user_id', userId)
         .maybeSingle(),
     ]);
-    if (upsertResult.error) throw new Error(upsertResult.error.message);
     if (profileResult.error) throw new Error(profileResult.error.message);
     if (reminderStateResult.error) throw new Error(reminderStateResult.error.message);
 
@@ -78,12 +93,30 @@ Deno.serve(async req => {
         scheduled_for: reconciled.scheduledFor,
         last_sent_at: reconciled.lastSentAt,
         last_message_index: reconciled.lastMessageIndex,
-        updated_at: new Date().toISOString(),
+        updated_at: nowIso,
       });
       if (stateError) throw new Error(stateError.message);
     }
 
-    return json(200, { ok: true });
+    let test = null;
+    if (payload?.sendTest === true) {
+      const { data: stored, error: storedError } = await admin
+        .from('push_subscriptions')
+        .select('id,user_id,endpoint,p256dh,auth')
+        .eq('endpoint', endpoint)
+        .eq('user_id', userId);
+      if (storedError) throw new Error(storedError.message);
+      const result = await sendToSubscriptions(admin, stored || [], {
+        title: 'BUST push is live',
+        body: 'If you are reading this on your lock screen, everything downstream works.',
+        tag: `bust-test-${userId}`,
+        kind: 'test',
+        data: { kind: 'test' },
+      });
+      test = { delivered: result.delivered, attempted: result.attempted, failures: result.failures };
+    }
+
+    return json(200, { ok: true, endpoint, test });
   } catch (error) {
     console.error('[register-push-subscription]', error);
     return json(500, { error: error instanceof Error ? error.message : 'Push registration failed' });
