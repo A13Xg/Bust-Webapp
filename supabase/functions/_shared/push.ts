@@ -124,7 +124,7 @@ export async function sendToSubscriptions(
   }
   if (goneIds.length) {
     await admin.from('push_subscriptions').delete().in('id', goneIds);
-    result.pruned = goneIds.length;
+    result.pruned += goneIds.length;
   }
   if (failedIds.length) {
     // A push service can reject for reasons that are not "gone" — most notably a
