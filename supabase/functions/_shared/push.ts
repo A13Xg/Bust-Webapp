@@ -131,8 +131,12 @@ export async function sendToSubscriptions(
     // 403 when the subscription was created without our VAPID key. Those never
     // recover, so count them and let the database drop an endpoint that has
     // failed persistently. A transient 5xx is cleared by the next success.
-    const { error } = await admin.rpc('bump_push_failure', { subscription_ids: failedIds });
-    if (error) console.error('[push] failure bookkeeping failed', error.message);
+    const { data: removed, error } = await admin.rpc('bump_push_failure', { subscription_ids: failedIds });
+    if (error) {
+      console.error('[push] failure bookkeeping failed', error.message);
+    } else {
+      result.pruned += Number(removed ?? 0);
+    }
   }
 
   return result;
