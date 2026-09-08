@@ -39,6 +39,7 @@ const serverBackend = {
   },
   // Server mode has no VAPID sender; the open tab notifies locally instead.
   async notifyEvent() { return { ok: false, reason: 'unsupported_in_server_mode' }; },
+  async broadcastTestNotification() { return { ok: false, reason: 'unsupported_in_server_mode' }; },
   webPushPublicKey() { return WEB_PUSH_PUBLIC_KEY; },
   async patchProfile(patch) { return (await rest('/profile', { method: 'PATCH', body: JSON.stringify(patch) })).user; },
   subscribe({ onBust, onProfile, onStatus }) {
@@ -86,6 +87,18 @@ const serverBackend = {
 /* ---------------------------------- static / Supabase mode ---------------------------------- */
 let supa = null;
 let profileCache = new Map();
+/* supabase-js reports a non-2xx Edge Function response as a generic
+ * FunctionsHttpError and tucks the real response on `context`. Without this the
+ * UI can only say "Edge Function returned a non-2xx status code". */
+async function readFunctionError(error) {
+  try {
+    const payload = await error?.context?.json?.();
+    return payload?.error || null;
+  } catch {
+    return null;
+  }
+}
+
 async function getSupa() {
   if (!supa) {
     const { createClient } = await import('@supabase/supabase-js');
@@ -208,6 +221,23 @@ const staticBackend = {
     const sb = await getSupa();
     const { data, error } = await sb.functions.invoke('notify-event', { body: { kind, id } });
     if (error) throw new Error(error.message || 'Crew notification failed');
+    if (data?.error) throw new Error(data.error);
+    return data || { ok: true };
+  },
+  /* Debug-menu only: push an arbitrary message to EVERY registered device,
+   * including the caller's own. Server-side an allowlist decides who may do
+   * this; deliberately not run through the push_events ledger, because a
+   * manual test send is something you may legitimately want to repeat. */
+  async broadcastTestNotification({ title, body } = {}) {
+    if (!String(title || '').trim() && !String(body || '').trim()) return { ok: false, reason: 'empty_message' };
+    const sb = await getSupa();
+    const { data, error } = await sb.functions.invoke('broadcast-test-notification', { body: { title, body } });
+    if (error) {
+      // The function returns 403 for a non-allowlisted caller; surface the
+      // function's own message rather than the SDK's generic wrapper.
+      const detail = await readFunctionError(error);
+      throw new Error(detail || error.message || 'Broadcast failed');
+    }
     if (data?.error) throw new Error(data.error);
     return data || { ok: true };
   },

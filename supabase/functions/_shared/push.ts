@@ -75,11 +75,14 @@ export type DeliveryResult = {
 export async function sendToSubscriptions(
   admin: SupabaseClient,
   subscriptions: PushSubscriptionRow[],
-  payload: PushPayload,
+  // A function instead of a payload renders per recipient, which is what lets a
+  // broadcast address each person by their own name in one pass.
+  payload: PushPayload | ((subscription: PushSubscriptionRow) => PushPayload),
   { ttlSeconds = 60 * 60 * 12 }: { ttlSeconds?: number } = {}
 ): Promise<DeliveryResult> {
   configureVapid();
-  const body = JSON.stringify(payload);
+  const perSubscription = typeof payload === 'function' ? payload : null;
+  const sharedBody = perSubscription ? null : JSON.stringify(payload);
   const result: DeliveryResult = { attempted: subscriptions.length, delivered: 0, pruned: 0, failures: [] };
   const nowIso = new Date().toISOString();
 
@@ -88,7 +91,7 @@ export async function sendToSubscriptions(
       try {
         await webpush.sendNotification(
           { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-          body,
+          sharedBody ?? JSON.stringify(perSubscription!(sub)),
           // "high" urgency keeps iOS from batching crew alerts into oblivion.
           { TTL: ttlSeconds, urgency: 'high' }
         );

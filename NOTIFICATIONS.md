@@ -10,10 +10,12 @@ which part broke.
 | Someone busts | Everyone except the buster | Web push (instant) + an in-app toast for anyone with the app open |
 | Someone unlocks an achievement | Everyone except that user | Web push |
 | No bust for 5-7 days | That user only | Web push, from the scheduled dispatcher |
+| An admin sends a debug broadcast | **Everyone, including the sender** | Web push, on demand from the debug menu |
 
 Reminder timing is randomized per user inside a 5-7 day window measured from
 their last bust, so the crew is never nagged in lockstep. Any bust resets the
-cycle. Copy for all three lives in `src/notificationMessages.js`.
+cycle. Copy for the first three lives in `src/notificationMessages.js`; broadcast copy is
+typed by hand and rendered by `src/broadcastTemplate.js`.
 
 ## Architecture
 
@@ -97,16 +99,48 @@ in the payload explicitly. `failure_count` is reset there for that reason;
 delivery. It also means the index above is load-bearing: drop it and every
 registration fails with `42P10`.
 
+## Debug broadcast
+
+`broadcast-test-notification` is the one path that can push arbitrary text to
+every registered device. It exists for testing delivery on real hardware, and is
+reachable only from the debug menu's NOTIFY tab (long-press or right-click
+DELETE ACCOUNT), behind a confirmation dialog.
+
+Two things about it differ from every other push path, both deliberate:
+
+- **An allowlist is the only authorisation.** `notify-event` can safely admit
+  any authenticated caller because it only announces a row that caller already
+  owns. There is no ownership check available here — free text is the point — so
+  the `BROADCAST_ADMINS` secret (comma-separated usernames and/or profile UUIDs)
+  is what stands between this function and a crew-wide spam cannon. It defaults
+  to `AlexG`, so a deploy that forgets the secret fails closed to one account
+  rather than open to everyone. Keep the list short.
+- **It does not use the `push_events` ledger.** The ledger makes a bust announce
+  exactly once; a test send has no row behind it and is something you may
+  legitimately want to repeat. (`push_events.kind` is also constrained to
+  `'bust' | 'achievement'`, so a broadcast could not be recorded there without a
+  migration.) Consequence: there is no dedupe and no backstop retry — a
+  broadcast that fails is simply not delivered, which is the right trade for a
+  manual test.
+
+Templates render **per recipient**, so `{{USER}}` names each person on their own
+device. That is why `sendToSubscriptions` accepts a payload *function* as well as
+a payload object. Tokens are documented in `describeTokens()` and shown in the
+tab itself. An unrecognised token renders literally rather than blanking, so a
+typo is visible in the preview instead of shipping an empty sentence.
+
 ## Deploying
 
 ```bash
 supabase link --project-ref <ref>
 supabase db push --linked                       # migrations, in filename order
 supabase secrets set VAPID_PUBLIC_KEY=... VAPID_PRIVATE_KEY=... REMINDER_CRON_SECRET=...
+supabase secrets set BROADCAST_ADMINS=AlexG           # who may crew-wide broadcast
 supabase functions deploy register-push-subscription
 supabase functions deploy notify-event
 supabase functions deploy dispatch-push-backstop
 supabase functions deploy dispatch-inactivity-reminders
+supabase functions deploy broadcast-test-notification
 ```
 
 Repository secrets required by `.github/workflows/notify-cron.yml`:
@@ -144,7 +178,7 @@ Repository secrets required by `.github/workflows/notify-cron.yml`:
 | `npm test` | vitest |
 
 The Edge Functions are Deno TypeScript, so eslint and `tsc` cannot see them —
-they need Deno, configured by `supabase/functions/deno.json`. All five run in CI.
+they need Deno, configured by `supabase/functions/deno.json`. All six run in CI.
 That config is used only for checking; it does not change what
 `supabase functions deploy` uploads (verified by redeploying an unmodified
 function and confirming an identical bundle hash).
