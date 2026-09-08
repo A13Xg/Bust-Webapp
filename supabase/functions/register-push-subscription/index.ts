@@ -46,18 +46,11 @@ Deno.serve(async req => {
     const nowIso = new Date().toISOString();
 
     // An endpoint identifies one browser profile. If it previously belonged to a
-    // different account (shared device, account switch), that claim is stale and
-    // must go, or the previous owner keeps receiving this user's notifications.
-    const { error: reclaimError } = await admin
-      .from('push_subscriptions')
-      .delete()
-      .eq('endpoint', endpoint)
-      .neq('user_id', userId);
-    if (reclaimError) throw new Error(reclaimError.message);
-
+    // different account (shared device, account switch), reclaim it atomically so
+    // the unique index on (endpoint) cannot race between delete + upsert.
     const { error: upsertError } = await admin.from('push_subscriptions').upsert(
       [{ user_id: userId, endpoint, p256dh, auth, user_agent: userAgent, updated_at: nowIso }],
-      { onConflict: 'user_id,endpoint' }
+      { onConflict: 'endpoint' }
     );
     if (upsertError) throw new Error(upsertError.message);
 
