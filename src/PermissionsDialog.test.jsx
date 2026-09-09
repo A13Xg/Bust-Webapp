@@ -131,6 +131,39 @@ describe('PermissionsDialog', () => {
     }
   });
 
+  it('recovers when a permission API never settles', async () => {
+    vi.useFakeTimers();
+    try {
+      const requestLocationFn = vi.fn(() => new Promise(() => {}));
+      render(
+        <PermissionsDialog
+          onDone={vi.fn()}
+          install={{ show: vi.fn() }}
+          enablePush={async () => ({ ok: true })}
+          getNotificationPermission={() => 'granted'}
+          requestLocationFn={requestLocationFn}
+        />
+      );
+      click('OKAY');
+      click('ACCEPT');
+
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(6000);
+        });
+      }
+      expect(requestLocationFn).toHaveBeenCalledTimes(3);
+      expect(screen.getByText('RETRY')).toBeTruthy();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      expect(screen.getByText('OKAY').disabled).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   /* A denial cannot be re-prompted, so a RETRY button there would do nothing. */
   it('shows no retry for a denial, only the settings hint', async () => {
     setup({ location: OUTCOME.denied });

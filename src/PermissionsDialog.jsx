@@ -38,7 +38,22 @@ const WHY_COPY =
   'BUST stamps every event with where and when it happened, and pings you the moment the crew fires. ' +
   'Location and notifications are what make those two things work.';
 const MAX_PERMISSION_ATTEMPTS = 3;
+const PERMISSION_ATTEMPT_TIMEOUT_MS = 6000;
 const OKAY_UNLOCK_DELAY_MS = 3000;
+
+async function completeWithin(task, timeoutMs = PERMISSION_ATTEMPT_TIMEOUT_MS) {
+  let timer = null;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(task),
+      new Promise(resolve => {
+        timer = setTimeout(() => resolve(null), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 function StatusRow({ icon, label, outcome, busy, onRetry }) {
   const failed = outcome !== OUTCOME.granted && outcome !== 'idle' && !busy;
@@ -85,7 +100,7 @@ export function PermissionsDialog({
     setBusy('location');
     let outcome = OUTCOME.timeout;
     for (let attempt = 0; attempt < MAX_PERMISSION_ATTEMPTS; attempt += 1) {
-      const result = await requestLocationFn();
+      const result = await completeWithin(requestLocationFn);
       outcome = result?.outcome || OUTCOME.timeout;
       if (result?.coords) storeCoords(result.coords);
       if (!isRetryable(outcome)) break;
@@ -100,10 +115,13 @@ export function PermissionsDialog({
     let outcome = OUTCOME.timeout;
     for (let attempt = 0; attempt < MAX_PERMISSION_ATTEMPTS; attempt += 1) {
       try {
-        const result = await enablePush();
-        outcome = result?.ok
-          ? OUTCOME.granted
-          : classifyNotificationPermission(result?.permission || getNotificationPermission?.());
+        const result = await completeWithin(enablePush);
+        outcome =
+          result == null
+            ? OUTCOME.timeout
+            : result.ok
+              ? OUTCOME.granted
+              : classifyNotificationPermission(result.permission || getNotificationPermission?.());
       } catch {
         outcome = classifyNotificationPermission(getNotificationPermission?.());
       }
