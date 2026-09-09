@@ -10,7 +10,7 @@
  */
 import { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X } from 'lucide-react';
+import { ChevronDown, X } from 'lucide-react';
 
 import { achievements } from './rules.js';
 import { backend } from './backend.js';
@@ -95,7 +95,7 @@ function NotifyTab({ username, users }) {
   const [confirm, setConfirm] = useState(false);
   const [picker, setPicker] = useState(false);
   const [singleUser, setSingleUser] = useState(true);
-  const [recipientQuery, setRecipientQuery] = useState('');
+  const [recipientMenuOpen, setRecipientMenuOpen] = useState(false);
   const [recipientIds, setRecipientIds] = useState(() => {
     const currentUser = (users || []).find(user => user.username.toLowerCase() === username.toLowerCase());
     return currentUser ? [currentUser.id] : [];
@@ -106,10 +106,10 @@ function NotifyTab({ username, users }) {
     () => (users || []).slice().sort((a, b) => String(a.username).localeCompare(String(b.username))),
     [users]
   );
-  const matchingRecipients = roster.filter(user =>
-    user.username.toLowerCase().includes(recipientQuery.trim().toLowerCase())
-  );
   const selectedNames = roster.filter(user => recipientIds.includes(user.id)).map(user => user.username);
+  const recipientLabel = selectedNames.length ? selectedNames.join(', ') : 'Select users';
+  const toggleRecipient = userId =>
+    setRecipientIds(ids => (ids.includes(userId) ? ids.filter(id => id !== userId) : [...ids, userId]));
 
   /* Preview uses your own name for {{USER}}, which is only exact for your own
    * device — every other recipient sees their own. Labelled as such below. */
@@ -163,27 +163,33 @@ function NotifyTab({ username, users }) {
           <input type="checkbox" checked={singleUser} onChange={e => setSingleUser(e.target.checked)} />
           Send to selected users
         </label>
-        <input
-          type="search"
-          disabled={!singleUser}
-          value={recipientQuery}
-          placeholder="Filter usernames"
-          onChange={e => setRecipientQuery(e.target.value)}
-        />
-        <div className="recipient-list" aria-label="Recipients">
-          {matchingRecipients.map(user => (
-            <label key={user.id}>
-              <input
-                type="checkbox"
-                disabled={!singleUser}
-                checked={recipientIds.includes(user.id)}
-                onChange={e =>
-                  setRecipientIds(ids => (e.target.checked ? [...ids, user.id] : ids.filter(id => id !== user.id)))
-                }
-              />
-              {user.username}
-            </label>
-          ))}
+        <div className="recipient-dropdown">
+          <button
+            type="button"
+            className="recipient-trigger"
+            disabled={!singleUser}
+            aria-expanded={recipientMenuOpen}
+            aria-haspopup="listbox"
+            onClick={() => setRecipientMenuOpen(open => !open)}
+          >
+            <span>{recipientLabel}</span>
+            <ChevronDown />
+          </button>
+          {singleUser && recipientMenuOpen && (
+            <div className="recipient-menu" role="listbox" aria-label="Recipients" aria-multiselectable="true">
+              {roster.map(user => (
+                <button
+                  type="button"
+                  role="option"
+                  key={user.id}
+                  aria-selected={recipientIds.includes(user.id)}
+                  onClick={() => toggleRecipient(user.id)}
+                >
+                  {user.username}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         {singleUser && <small>{selectedNames.length ? selectedNames.join(', ') : 'Select at least one user.'}</small>}
       </div>

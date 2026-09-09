@@ -18,7 +18,7 @@
  * No close button: the only ways out are ACCEPT (with everything unchecked, if
  * that is what you want) and the final OKAY.
  */
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion } from 'framer-motion';
 import { Bell, MapPin, RotateCw, Smartphone, X } from 'lucide-react';
@@ -37,6 +37,8 @@ import {
 const WHY_COPY =
   'BUST stamps every event with where and when it happened, and pings you the moment the crew fires. ' +
   'Location and notifications are what make those two things work.';
+const MAX_PERMISSION_ATTEMPTS = 3;
+const OKAY_UNLOCK_DELAY_MS = 3000;
 
 function StatusRow({ icon, label, outcome, busy, onRetry }) {
   const failed = outcome !== OUTCOME.granted && outcome !== 'idle' && !busy;
@@ -71,14 +73,23 @@ export function PermissionsDialog({
   const [dontAsk, setDontAsk] = useState(false);
   const [results, setResults] = useState({ location: 'idle', notifications: 'idle' });
   const [busy, setBusy] = useState(null);
+  const [okayReady, setOkayReady] = useState(false);
   const wantInstall = useRef(true);
+  const okayTimer = useRef(null);
+
+  useEffect(() => () => clearTimeout(okayTimer.current), []);
 
   const toggle = key => setChoices(prev => ({ ...prev, [key]: !prev[key] }));
 
   const askLocation = useCallback(async () => {
     setBusy('location');
-    const { outcome, coords } = await requestLocationFn();
-    if (coords) storeCoords(coords);
+    let outcome = OUTCOME.timeout;
+    for (let attempt = 0; attempt < MAX_PERMISSION_ATTEMPTS; attempt += 1) {
+      const result = await requestLocationFn();
+      outcome = result?.outcome || OUTCOME.timeout;
+      if (result?.coords) storeCoords(result.coords);
+      if (!isRetryable(outcome)) break;
+    }
     setResults(prev => ({ ...prev, location: outcome }));
     setBusy(null);
     return outcome;
@@ -86,14 +97,17 @@ export function PermissionsDialog({
 
   const askNotifications = useCallback(async () => {
     setBusy('notifications');
-    let outcome;
-    try {
-      const result = await enablePush();
-      outcome = result?.ok
-        ? OUTCOME.granted
-        : classifyNotificationPermission(result?.permission || getNotificationPermission?.());
-    } catch {
-      outcome = classifyNotificationPermission(getNotificationPermission?.());
+    let outcome = OUTCOME.timeout;
+    for (let attempt = 0; attempt < MAX_PERMISSION_ATTEMPTS; attempt += 1) {
+      try {
+        const result = await enablePush();
+        outcome = result?.ok
+          ? OUTCOME.granted
+          : classifyNotificationPermission(result?.permission || getNotificationPermission?.());
+      } catch {
+        outcome = classifyNotificationPermission(getNotificationPermission?.());
+      }
+      if (!isRetryable(outcome)) break;
     }
     setResults(prev => ({ ...prev, notifications: outcome }));
     setBusy(null);
@@ -113,8 +127,14 @@ export function PermissionsDialog({
     }
 
     setPhase('status');
-    if (choices.location) await askLocation();
-    if (choices.notifications) await askNotifications();
+    const finalOutcomes = [];
+    if (choices.location) finalOutcomes.push(await askLocation());
+    if (choices.notifications) finalOutcomes.push(await askNotifications());
+    if (finalOutcomes.some(isRetryable)) {
+      okayTimer.current = setTimeout(() => setOkayReady(true), OKAY_UNLOCK_DELAY_MS);
+    } else {
+      setOkayReady(true);
+    }
   }
 
   /*
@@ -210,7 +230,7 @@ export function PermissionsDialog({
               />
             )}
             <div className="picker-actions">
-              <button className="mf-button" disabled={Boolean(busy)} onClick={() => void finish()}>
+              <button className="mf-button" disabled={Boolean(busy) || !okayReady} onClick={() => void finish()}>
                 OKAY
               </button>
             </div>

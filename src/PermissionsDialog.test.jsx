@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { PermissionsDialog } from './PermissionsDialog.jsx';
 import { DONT_ASK_KEY, SESSION_SEEN_KEY } from './permissionPrefs.js';
@@ -100,6 +100,35 @@ describe('PermissionsDialog', () => {
     outcome = OUTCOME.granted;
     click('RETRY');
     await waitFor(() => expect(row('Location').className).toContain('ok'));
+  });
+
+  it('tries an unresolved permission three times, then unlocks OKAY after a short delay', async () => {
+    vi.useFakeTimers();
+    try {
+      const requestLocationFn = vi.fn(async () => ({ outcome: OUTCOME.timeout, coords: null }));
+      render(
+        <PermissionsDialog
+          onDone={vi.fn()}
+          install={{ show: vi.fn() }}
+          enablePush={async () => ({ ok: true })}
+          getNotificationPermission={() => 'granted'}
+          requestLocationFn={requestLocationFn}
+        />
+      );
+      click('OKAY');
+      click('ACCEPT');
+
+      await vi.waitFor(() => expect(requestLocationFn).toHaveBeenCalledTimes(3));
+      expect(screen.getByText('RETRY')).toBeTruthy();
+      expect(screen.getByText('OKAY').disabled).toBe(true);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      expect(screen.getByText('OKAY').disabled).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   /* A denial cannot be re-prompted, so a RETRY button there would do nothing. */

@@ -106,7 +106,8 @@ describe('DebugMenu', () => {
   it('sends to every checked recipient', () => {
     open();
     fireEvent.click(tab('NOTIFY'));
-    fireEvent.click(screen.getByLabelText('Ann'));
+    fireEvent.click(screen.getByRole('button', { name: 'AlexG' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Ann' }));
     fireEvent.click(screen.getByText('SEND TO SELECTED USERS'));
     fireEvent.click(screen.getByText('SEND IT'));
     expect(broadcastTestNotification).toHaveBeenCalledWith(expect.objectContaining({ userIds: ['u-0', 'u-1'] }));
@@ -116,7 +117,7 @@ describe('DebugMenu', () => {
     open();
     fireEvent.click(tab('NOTIFY'));
     fireEvent.click(screen.getByLabelText('Send to selected users'));
-    expect(screen.getByPlaceholderText('Filter usernames').disabled).toBe(true);
+    expect(screen.getByRole('button', { name: 'AlexG' }).disabled).toBe(true);
     fireEvent.click(screen.getByText('BROADCAST TO ALL USERS'));
     fireEvent.click(screen.getByText('SEND IT'));
     expect(broadcastTestNotification).toHaveBeenCalledWith(expect.objectContaining({ userIds: null }));
