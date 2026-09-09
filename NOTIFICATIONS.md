@@ -111,10 +111,23 @@ Two things about it differ from every other push path, both deliberate:
 - **An allowlist is the only authorisation.** `notify-event` can safely admit
   any authenticated caller because it only announces a row that caller already
   owns. There is no ownership check available here — free text is the point — so
-  the `BROADCAST_ADMINS` secret (comma-separated usernames and/or profile UUIDs)
-  is what stands between this function and a crew-wide spam cannon. It defaults
-  to `AlexG`, so a deploy that forgets the secret fails closed to one account
-  rather than open to everyone. Keep the list short.
+  the `BROADCAST_ADMINS` secret is what stands between this function and a
+  crew-wide spam cannon. It holds comma-separated SHA-256 hex digests, and it
+  defaults to one digest so a deploy that forgets the secret fails closed to a
+  single account rather than open to everyone.
+
+  A digest may be of a **profile UUID** or of a **lower-cased username**, and
+  they are not equally strong. A UUID cannot be changed — RLS pins `id` to
+  `auth.uid()` — so it genuinely restricts who can broadcast. A username is
+  obfuscation only: `profiles_update` lets any crew member rename their own
+  row, the `unique` constraint on `username` is case-sensitive (so `alexg` and
+  `AlexG` coexist), and usernames are world-readable, so an attacker can try
+  each in turn. The username option is accepted deliberately for low friction;
+  prefer the UUID. Generate either with:
+
+  ```bash
+  node -e "console.log(require('crypto').createHash('sha256').update('VALUE').digest('hex'))"
+  ```
 - **It does not use the `push_events` ledger.** The ledger makes a bust announce
   exactly once; a test send has no row behind it and is something you may
   legitimately want to repeat. (`push_events.kind` is also constrained to
@@ -166,7 +179,7 @@ pointer at site settings.
 supabase link --project-ref <ref>
 supabase db push --linked                       # migrations, in filename order
 supabase secrets set VAPID_PUBLIC_KEY=... VAPID_PRIVATE_KEY=... REMINDER_CRON_SECRET=...
-supabase secrets set BROADCAST_ADMINS=AlexG           # who may crew-wide broadcast
+supabase secrets set BROADCAST_ADMINS=<sha256-hex>    # who may crew-wide broadcast
 supabase functions deploy register-push-subscription
 supabase functions deploy notify-event
 supabase functions deploy dispatch-push-backstop
@@ -209,7 +222,7 @@ Repository secrets required by `.github/workflows/notify-cron.yml`:
 | `npm test` | vitest |
 
 The Edge Functions are Deno TypeScript, so eslint and `tsc` cannot see them —
-they need Deno, configured by `supabase/functions/deno.json`. All six run in CI.
+they need Deno, configured by `supabase/functions/deno.json`. All of them run in CI.
 That config is used only for checking; it does not change what
 `supabase functions deploy` uploads (verified by redeploying an unmodified
 function and confirming an identical bundle hash).

@@ -16,3 +16,6 @@ verify_jwt = false
 
 [functions.dispatch-push-backstop]
 verify_jwt = false
+
+[functions.broadcast-test-notification]
+verify_jwt = true

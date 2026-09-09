@@ -21,10 +21,28 @@ import { corsHeaders, json, sendToSubscriptions, subscriptionsForCrew } from '..
 const TITLE_MAX = 120;
 const BODY_MAX = 300;
 
-/* Configure with the BROADCAST_ADMINS secret: a comma-separated list of
- * usernames and/or profile UUIDs. Falls back to the project owner so a
- * misconfigured deploy fails closed to one person rather than open to all. */
-const DEFAULT_ADMINS = ['AlexG'];
+/*
+ * Configure with the BROADCAST_ADMINS secret: a comma-separated list of
+ * SHA-256 hex digests. Each digest may be of a lower-cased username OR of a
+ * profile UUID, and the two are NOT equivalent in strength:
+ *
+ *   UUID     - you cannot change your own id (RLS pins it to auth.uid()), so
+ *              this genuinely restricts who can broadcast. Prefer it.
+ *   username - obfuscation only. Any crew member can rename their own profile
+ *              (profiles_update grants update on every column of their own
+ *              row, and the `unique` constraint on username is case-sensitive,
+ *              so 'alexg' and 'AlexG' coexist). Usernames are world-readable,
+ *              so an attacker can simply try each one. Accepted deliberately
+ *              as a low-friction option; it raises effort, not the ceiling.
+ *
+ * Generate one with:
+ *   node -e "console.log(require('crypto').createHash('sha256').update('VALUE').digest('hex'))"
+ * ...where VALUE is your UUID, or your username in lower case.
+ *
+ * The default is the digest of the project owner's username, so a deploy that
+ * forgets the secret fails closed to one account rather than open to everyone.
+ */
+const DEFAULT_ADMIN_HASHES = ['c796c9789455782ec850c0fe2d0e843efd7f27d31b8c1623298ecb8b91e77d0a'];
 
 function allowlist() {
   const raw = Deno.env.get('BROADCAST_ADMINS') || '';
@@ -32,12 +50,27 @@ function allowlist() {
     .split(',')
     .map(entry => entry.trim().toLowerCase())
     .filter(Boolean);
-  return entries.length ? entries : DEFAULT_ADMINS.map(entry => entry.toLowerCase());
+  return entries.length ? entries : DEFAULT_ADMIN_HASHES;
 }
 
-function isAllowed(userId: string, username: string | null) {
+async function sha256Hex(value: string) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest))
+    .map(byte => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+async function isAllowed(userId: string, username: string | null) {
   const list = allowlist();
-  return list.includes(String(username || '').toLowerCase()) || list.includes(String(userId).toLowerCase());
+  // Empty identifiers are never candidates: hashing '' would otherwise let a
+  // digest of the empty string match every profile that has no username.
+  const identifiers = [String(username || '').trim(), String(userId || '').trim()]
+    .filter(Boolean)
+    .map(value => value.toLowerCase());
+  for (const identifier of identifiers) {
+    if (list.includes(await sha256Hex(identifier))) return true;
+  }
+  return false;
 }
 
 Deno.serve(async req => {
@@ -70,7 +103,7 @@ Deno.serve(async req => {
       .maybeSingle();
     const senderName = senderProfile?.username || null;
 
-    if (!isAllowed(senderId, senderName)) {
+    if (!(await isAllowed(senderId, senderName))) {
       console.warn('[broadcast] refused', senderId, senderName);
       return json(403, { error: 'This account is not allowed to broadcast.' });
     }
