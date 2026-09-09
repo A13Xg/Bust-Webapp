@@ -21,7 +21,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion } from 'framer-motion';
-import { Bell, Lock, MapPin, RotateCw, Smartphone, X } from 'lucide-react';
+import { Bell, Check, Lock, MapPin, RotateCw, Smartphone, X } from 'lucide-react';
 
 import { markSeenThisSession, permissionStates, setOptedOut } from './permissionPrefs.js';
 import {
@@ -230,7 +230,12 @@ export function PermissionsDialog({
                   onChange={() => toggle('notifications')}
                 />
                 {grantedPermissions.notifications && (
-                  <Lock className="perm-check-lock" aria-label="Notifications enabled" />
+                  <>
+                    <span className="perm-check-granted-mark" aria-hidden="true">
+                      <Check />
+                    </span>
+                    <Lock className="perm-check-lock" aria-label="Notifications enabled" />
+                  </>
                 )}
               </span>
               <Bell />
@@ -244,7 +249,14 @@ export function PermissionsDialog({
                   disabled={grantedPermissions.location}
                   onChange={() => toggle('location')}
                 />
-                {grantedPermissions.location && <Lock className="perm-check-lock" aria-label="Location enabled" />}
+                {grantedPermissions.location && (
+                  <>
+                    <span className="perm-check-granted-mark" aria-hidden="true">
+                      <Check />
+                    </span>
+                    <Lock className="perm-check-lock" aria-label="Location enabled" />
+                  </>
+                )}
               </span>
               <MapPin />
               <span>Allow Location Access</span>

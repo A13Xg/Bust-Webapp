@@ -63,6 +63,7 @@ describe('PermissionsDialog', () => {
     click('OKAY');
     await waitFor(() => expect(document.querySelectorAll('.perm-check input')[0].disabled).toBe(true));
     expect(document.querySelector('.perm-check.granted-locked')).toBeTruthy();
+    expect(document.querySelector('.perm-check-granted-mark')).toBeTruthy();
     expect(screen.getByLabelText('Notifications enabled')).toBeTruthy();
 
     click('ACCEPT');
