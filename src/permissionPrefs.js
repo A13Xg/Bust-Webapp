@@ -1,3 +1,5 @@
+import { GEO_STORAGE_KEY } from './permissionRequests.js';
+
 /*
  * "Don't ask me again" for the first-login Permissions dialog.
  *
@@ -70,14 +72,16 @@ export function shouldShowPermissionsDialog({
 export async function permissionStates({
   notification = globalThis.Notification,
   permissions = globalThis.navigator?.permissions,
+  local = globalThis.localStorage,
 } = {}) {
   const notifications = notification?.permission === 'granted';
-  if (!permissions?.query) return { notifications, location: false };
+  const knownLocation = read(local, GEO_STORAGE_KEY) !== null;
+  if (!permissions?.query) return { notifications, location: knownLocation };
   try {
     const location = await permissions.query({ name: 'geolocation' });
-    return { notifications, location: location?.state === 'granted' };
+    return { notifications, location: location?.state === 'granted' || knownLocation };
   } catch {
-    return { notifications, location: false };
+    return { notifications, location: knownLocation };
   }
 }
 

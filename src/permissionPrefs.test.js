@@ -6,6 +6,7 @@ import {
   hasOptedOut,
   markSeenThisSession,
   permissionsAlreadyGranted,
+  permissionStates,
   seenThisSession,
   setOptedOut,
   shouldShowPermissionsDialog,
@@ -110,6 +111,16 @@ describe('permission preferences', () => {
         permissions: { query: async () => ({ state: 'prompt' }) },
       })
     ).resolves.toBe(false);
+  });
+
+  it('recognizes a previously successful location check when iOS has no Permissions API', async () => {
+    await expect(
+      permissionStates({
+        notification: { permission: 'default' },
+        permissions: undefined,
+        local: store({ bust_geo: '{"lat":1}' }),
+      })
+    ).resolves.toEqual({ notifications: false, location: true });
   });
 });
 
