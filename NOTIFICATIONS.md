@@ -189,7 +189,7 @@ that list can seize any account in the crew. It logs every use with both the
 actor and the target, and the service-role key never leaves the function.
 
 Usernames became a safe thing to authorise on in
-`migrations/20260908_username_case_insensitive.sql`: a unique index on
+`migrations/20260908010000_username_case_insensitive.sql`: a unique index on
 `lower(username)` makes `alexg` and `AlexG` one identity, and a trigger makes
 usernames immutable. Before that, `profiles_update` let any crew member rename
 themselves onto the allowlist. A digest of a profile UUID remains the stronger

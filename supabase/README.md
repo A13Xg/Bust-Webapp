@@ -75,3 +75,14 @@ Both run in CI and need Deno (`denoland/setup-deno`). Config lives in
 ## Time semantics
 
 Express and static Supabase reconciliation execute the same JavaScript evaluator, removing backend-specific SQL timezone drift. Calendar achievements still use the evaluator runtime's local calendar timezone. Moving to a persisted user or event timezone would be a separate product and data migration rather than a silent behavior change.
+
+## Migration file naming
+
+Use a full `YYYYMMDDHHMMSS_name.sql` prefix, not just `YYYYMMDD_`.
+
+Supabase derives a migration's *version* from the leading digits of the
+filename, and `supabase_migrations.schema_migrations` has that version as its
+primary key. Two files sharing a `YYYYMMDD` prefix therefore collide, and the
+push fails with `duplicate key value violates unique constraint
+"schema_migrations_pkey"`. The older 8-digit files here predate that lesson and
+work only because there is at most one per day.

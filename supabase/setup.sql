@@ -290,7 +290,7 @@ begin
 end $$;
 
 -- ---------- case-insensitive, immutable usernames ----------
--- See migrations/20260908_username_case_insensitive.sql for the reasoning.
+-- See migrations/20260908010000_username_case_insensitive.sql for the reasoning.
 -- `unique` on text is case-sensitive, so this index is what makes 'AlexG' and
 -- 'alexg' the same identity; the trigger stops a profile being renamed onto a
 -- name freed up by a deleted account.

@@ -8,7 +8,7 @@
  * BROADCAST_ADMINS holds comma-separated SHA-256 hex digests. A digest may be
  * of a profile UUID or of a lower-cased username; both are accepted, and since
  * usernames are now case-insensitively unique AND immutable at the database
- * level (migrations/20260908_username_case_insensitive.sql), neither can be
+ * level (migrations/20260908010000_username_case_insensitive.sql), neither can be
  * moved onto the allowlist by a crew member any more.
  *
  * Generate a digest with:
