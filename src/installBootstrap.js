@@ -9,7 +9,7 @@
  * Because it is a separate entry point rather than an import of the app bundle,
  * it hands itself to React through `window.bustInstall`.
  */
-import { clearInstallPromptDismissal, detectInstallPlatform, isStandalone } from './pwaInstall.js';
+import { detectInstallPlatform, isStandalone } from './pwaInstall.js';
 
 const asset = path => (import.meta.env?.BASE_URL || '/') + String(path).replace(/^\//, '');
 
@@ -28,7 +28,6 @@ window.addEventListener('beforeinstallprompt', event => {
 
 window.addEventListener('appinstalled', () => {
   deferredInstallPrompt = null;
-  clearInstallPromptDismissal();
 });
 
 const bootPlatform = detectInstallPlatform();
@@ -67,7 +66,6 @@ async function showInstall() {
       await promptEvent.prompt();
       const choice = await promptEvent.userChoice;
       if (choice?.outcome === 'accepted') {
-        clearInstallPromptDismissal();
         return { outcome: 'installed', guide: null };
       }
     } catch {

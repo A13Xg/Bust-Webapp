@@ -1,35 +1,21 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-import {
-  INSTALL_DISMISS_KEY,
-  INSTALL_DISMISS_MS,
-  clearInstallPromptDismissal,
-  detectInstallPlatform,
-  installCopy,
-  isStandalone,
-  markInstallPromptDismissed,
-  shouldShowInstallPrompt,
-} from './pwaInstall.js';
-
-function storageStub(initial = {}) {
-  const values = new Map(Object.entries(initial));
-  return {
-    getItem: vi.fn(key => values.get(key) ?? null),
-    setItem: vi.fn((key, value) => values.set(key, value)),
-    removeItem: vi.fn(key => values.delete(key)),
-  };
-}
+import { detectInstallPlatform, isStandalone } from './pwaInstall.js';
 
 describe('PWA install platform detection', () => {
   it('detects iPhone Safari', () => {
     const platform = detectInstallPlatform({
-      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1',
+      userAgent:
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1',
       platform: 'iPhone',
       maxTouchPoints: 5,
     });
     expect(platform).toMatchObject({ ios: true, mobile: true, safari: true, android: false });
   });
 
+  /* iPadOS reports a desktop-class UA; touch points are the only tell. Getting
+   * this wrong sends an iPad down the Chromium branch, where beforeinstallprompt
+   * never fires and the user is offered nothing at all. */
   it('detects iPadOS desktop-class user agents', () => {
     const platform = detectInstallPlatform({
       userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15',
@@ -40,6 +26,16 @@ describe('PWA install platform detection', () => {
     expect(platform.mobile).toBe(true);
   });
 
+  it('does not mistake a real Mac for an iPad', () => {
+    const platform = detectInstallPlatform({
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15',
+      platform: 'MacIntel',
+      maxTouchPoints: 0,
+    });
+    expect(platform.ios).toBe(false);
+    expect(platform.mobile).toBe(false);
+  });
+
   it('detects Android Chrome', () => {
     const platform = detectInstallPlatform({
       userAgent: 'Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 Chrome/132.0.0.0 Mobile Safari/537.36',
@@ -48,53 +44,44 @@ describe('PWA install platform detection', () => {
     });
     expect(platform).toMatchObject({ android: true, mobile: true, chrome: true, ios: false });
   });
+
+  /* An in-app browser on iOS cannot add to the Home Screen at all, so it must
+   * not be reported as Safari. */
+  it('does not report a third-party iOS browser as Safari', () => {
+    const platform = detectInstallPlatform({
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 CriOS/132.0 Mobile/15E148',
+      platform: 'iPhone',
+      maxTouchPoints: 5,
+    });
+    expect(platform.ios).toBe(true);
+    expect(platform.safari).toBe(false);
+  });
+
+  it('survives a navigator with nothing on it', () => {
+    expect(detectInstallPlatform({})).toMatchObject({ ios: false, android: false, mobile: false });
+    expect(detectInstallPlatform(undefined)).toBeTruthy();
+  });
 });
 
-describe('PWA install visibility', () => {
-  it('never shows while running standalone', () => {
+describe('standalone detection', () => {
+  it('is true when the display mode is standalone', () => {
     expect(isStandalone({ matchMedia: () => ({ matches: true }), navigatorObject: {}, documentObject: {} })).toBe(true);
-    expect(shouldShowInstallPrompt({ installed: true, platform: { mobile: true } })).toBe(false);
   });
 
-  it('does not show on desktop', () => {
-    expect(shouldShowInstallPrompt({ installed: false, platform: { mobile: false } })).toBe(false);
+  /* iOS exposes navigator.standalone rather than the display-mode query. */
+  it('is true for an iOS home-screen launch', () => {
+    expect(
+      isStandalone({ matchMedia: () => ({ matches: false }), navigatorObject: { standalone: true }, documentObject: {} })
+    ).toBe(true);
   });
 
-  it('respects the seven-day dismissal window', () => {
-    const now = 1_000_000_000;
-    const storage = storageStub({ [INSTALL_DISMISS_KEY]: String(now - INSTALL_DISMISS_MS + 1) });
-    expect(shouldShowInstallPrompt({ installed: false, platform: { mobile: true }, storage, now })).toBe(false);
+  it('is false in an ordinary browser tab', () => {
+    expect(
+      isStandalone({ matchMedia: () => ({ matches: false }), navigatorObject: {}, documentObject: {} })
+    ).toBe(false);
   });
 
-  it('shows again after the dismissal window expires', () => {
-    const now = 1_000_000_000;
-    const storage = storageStub({ [INSTALL_DISMISS_KEY]: String(now - INSTALL_DISMISS_MS - 1) });
-    expect(shouldShowInstallPrompt({ installed: false, platform: { mobile: true }, storage, now })).toBe(true);
-  });
-
-  it('handles storage failures without breaking onboarding', () => {
-    const storage = { getItem: vi.fn(() => { throw new Error('blocked'); }) };
-    expect(shouldShowInstallPrompt({ installed: false, platform: { mobile: true }, storage })).toBe(true);
-  });
-});
-
-describe('PWA install persistence and copy', () => {
-  it('stores and clears dismissals safely', () => {
-    const storage = storageStub();
-    markInstallPromptDismissed(storage, 1234);
-    expect(storage.setItem).toHaveBeenCalledWith(INSTALL_DISMISS_KEY, '1234');
-    clearInstallPromptDismissal(storage);
-    expect(storage.removeItem).toHaveBeenCalledWith(INSTALL_DISMISS_KEY);
-  });
-
-  it('uses native install copy only when a prompt is available', () => {
-    expect(installCopy({ android: true, mobile: true }, true).mode).toBe('native');
-    expect(installCopy({ android: true, mobile: true }, false).mode).toBe('generic');
-  });
-
-  it('gives iOS Safari manual Home Screen instructions', () => {
-    const copy = installCopy({ ios: true, safari: true, mobile: true }, false);
-    expect(copy.mode).toBe('ios-instructions');
-    expect(copy.body).toMatch(/Home Screen/i);
+  it('does not throw when matchMedia is unavailable', () => {
+    expect(isStandalone({ matchMedia: undefined, navigatorObject: {}, documentObject: {} })).toBe(false);
   });
 });

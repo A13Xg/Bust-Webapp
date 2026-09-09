@@ -1,0 +1,24 @@
+-- =============================================================
+-- Account deletion goes through the `delete-account` Edge Function.
+--
+-- That function removes the `auth.users` row and lets the existing
+-- `profiles.id references auth.users(id) on delete cascade` take the
+-- profile with it. It runs as the service role, so it does not need —
+-- and is not affected by — any RLS policy here.
+--
+-- The direct-delete policy is therefore not merely redundant, it is
+-- harmful: a client that deletes only its own `profiles` row leaves the
+-- auth user behind, still holding the synthetic email derived from that
+-- username. The name can then never be registered again, because signup
+-- trips Supabase Auth's duplicate-email check and reports "Username
+-- already exists" for a profile that no longer exists. That is exactly
+-- the bug the function was written to fix, so leaving the policy in
+-- place leaves the bug reachable.
+--
+-- Cascades are system-level and bypass RLS, so removing this policy does
+-- not interfere with the cascade that actually performs the cleanup.
+--
+-- Repeatable: safe to run multiple times.
+-- =============================================================
+
+drop policy if exists profiles_delete on public.profiles;

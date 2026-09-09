@@ -242,8 +242,12 @@ create policy profiles_insert on public.profiles for insert to authenticated wit
 drop policy if exists profiles_update on public.profiles;
 create policy profiles_update on public.profiles for update to authenticated using (id = auth.uid()) with check (id = auth.uid());
 
+-- No delete policy on purpose. Account deletion goes through the delete-account
+-- Edge Function, which removes the auth.users row and lets the cascade take the
+-- profile with it. A client-side profile delete would leave the auth user behind
+-- holding this username's synthetic email, making the name unregisterable
+-- forever. Cascades bypass RLS, so no policy is needed for the real path.
 drop policy if exists profiles_delete on public.profiles;
-create policy profiles_delete on public.profiles for delete to authenticated using (id = auth.uid());
 
 -- Busts: crew-readable; inserts are yours only AND blocked during the 2-hour cooldown.
 drop policy if exists busts_select on public.busts;
