@@ -23,7 +23,7 @@ import { createPortal } from 'react-dom';
 import { motion } from 'framer-motion';
 import { Bell, MapPin, RotateCw, Smartphone, X } from 'lucide-react';
 
-import { markSeenThisSession, setOptedOut } from './permissionPrefs.js';
+import { markSeenThisSession, permissionStates, setOptedOut } from './permissionPrefs.js';
 import {
   OUTCOME,
   classifyNotificationPermission,
@@ -89,9 +89,11 @@ export function PermissionsDialog({
   getNotificationPermission,
   install = globalThis.window?.bustInstall,
   requestLocationFn = requestLocation,
+  getPermissionStates = permissionStates,
 }) {
   const [phase, setPhase] = useState('why');
   const [choices, setChoices] = useState({ notifications: true, location: true, install: true });
+  const [grantedPermissions, setGrantedPermissions] = useState({});
   const [dontAsk, setDontAsk] = useState(false);
   const [results, setResults] = useState({ location: 'idle', notifications: 'idle' });
   const [busy, setBusy] = useState(null);
@@ -100,6 +102,20 @@ export function PermissionsDialog({
   const okayTimer = useRef(null);
 
   useEffect(() => () => clearTimeout(okayTimer.current), []);
+  useEffect(() => {
+    let active = true;
+    void getPermissionStates().then(granted => {
+      if (!active) return;
+      setGrantedPermissions(granted);
+      setResults({
+        location: granted.location ? OUTCOME.granted : 'idle',
+        notifications: granted.notifications ? OUTCOME.granted : 'idle',
+      });
+    });
+    return () => {
+      active = false;
+    };
+  }, [getPermissionStates]);
 
   const toggle = key => setChoices(prev => ({ ...prev, [key]: !prev[key] }));
 
@@ -153,8 +169,8 @@ export function PermissionsDialog({
 
     setPhase('status');
     const finalOutcomes = [];
-    if (choices.location) finalOutcomes.push(await askLocation());
-    if (choices.notifications) finalOutcomes.push(await askNotifications());
+    if (choices.location && !grantedPermissions.location) finalOutcomes.push(await askLocation());
+    if (choices.notifications && !grantedPermissions.notifications) finalOutcomes.push(await askNotifications());
     if (finalOutcomes.some(isRetryable)) {
       okayTimer.current = setTimeout(() => setOkayReady(true), OKAY_UNLOCK_DELAY_MS);
     } else {
@@ -205,13 +221,23 @@ export function PermissionsDialog({
 
         {phase === 'choose' && (
           <motion.div layout className="perm-phase">
-            <label className="perm-check">
-              <input type="checkbox" checked={choices.notifications} onChange={() => toggle('notifications')} />
+            <label className={`perm-check${grantedPermissions.notifications ? ' granted-locked' : ''}`}>
+              <input
+                type="checkbox"
+                checked={choices.notifications}
+                disabled={grantedPermissions.notifications}
+                onChange={() => toggle('notifications')}
+              />
               <Bell />
               <span>Allow Notifications</span>
             </label>
-            <label className="perm-check">
-              <input type="checkbox" checked={choices.location} onChange={() => toggle('location')} />
+            <label className={`perm-check${grantedPermissions.location ? ' granted-locked' : ''}`}>
+              <input
+                type="checkbox"
+                checked={choices.location}
+                disabled={grantedPermissions.location}
+                onChange={() => toggle('location')}
+              />
               <MapPin />
               <span>Allow Location Access</span>
             </label>

@@ -8,7 +8,7 @@ import { OUTCOME } from './permissionRequests.js';
 const click = label => fireEvent.click(screen.getByText(label));
 const row = name => screen.getByText(name).closest('.perm-row');
 
-function setup({ location = OUTCOME.granted, push = { ok: true }, order = [] } = {}) {
+function setup({ location = OUTCOME.granted, push = { ok: true }, order = [], grantedPermissions = {} } = {}) {
   const onDone = vi.fn();
   const install = { show: vi.fn(async () => ({ outcome: 'installed', guide: null })) };
   const requestLocationFn = vi.fn(async () => {
@@ -29,6 +29,7 @@ function setup({ location = OUTCOME.granted, push = { ok: true }, order = [] } =
       enablePush={enablePush}
       getNotificationPermission={() => 'default'}
       requestLocationFn={requestLocationFn}
+      getPermissionStates={async () => grantedPermissions}
     />
   );
   return { onDone, install, requestLocationFn, enablePush };
@@ -55,6 +56,18 @@ describe('PermissionsDialog', () => {
     expect(boxes.length).toBe(4);
     expect([...boxes].map(b => b.checked)).toEqual([true, true, true, false]);
     expect(document.querySelector('.perm-check-hero')).toBeTruthy(); // Install App is the prominent one
+  });
+
+  it('locks a pre-granted permission and does not request it again', async () => {
+    const { enablePush, requestLocationFn } = setup({ grantedPermissions: { notifications: true, location: false } });
+    click('OKAY');
+    await waitFor(() => expect(document.querySelectorAll('.perm-check input')[0].disabled).toBe(true));
+    expect(document.querySelector('.perm-check.granted-locked')).toBeTruthy();
+
+    click('ACCEPT');
+    await waitFor(() => expect(row('Location').className).toContain('ok'));
+    expect(enablePush).not.toHaveBeenCalled();
+    expect(requestLocationFn).toHaveBeenCalled();
   });
 
   /* Order matters: two native prompts at once and the browser drops one. */

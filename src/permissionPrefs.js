@@ -66,16 +66,23 @@ export function shouldShowPermissionsDialog({
   return true;
 }
 
-/** Only skip the first-login dialog when both browser permissions are already on. */
-export async function permissionsAlreadyGranted({
+/** Read each browser permission so partially-complete dialogs can lock passed controls. */
+export async function permissionStates({
   notification = globalThis.Notification,
   permissions = globalThis.navigator?.permissions,
 } = {}) {
-  if (notification?.permission !== 'granted' || !permissions?.query) return false;
+  const notifications = notification?.permission === 'granted';
+  if (!permissions?.query) return { notifications, location: false };
   try {
     const location = await permissions.query({ name: 'geolocation' });
-    return location?.state === 'granted';
+    return { notifications, location: location?.state === 'granted' };
   } catch {
-    return false;
+    return { notifications, location: false };
   }
+}
+
+/** Only skip the first-login dialog when both browser permissions are already on. */
+export async function permissionsAlreadyGranted(options) {
+  const { notifications, location } = await permissionStates(options);
+  return notifications && location;
 }

@@ -443,6 +443,8 @@ img,svg,canvas{max-width:100%}
 .perm-check:hover{border-color:rgba(255,94,0,.4)}
 .perm-check svg{width:20px;height:20px;color:var(--orange)}
 .perm-check input{accent-color:var(--orange);width:19px;height:19px;flex:none}
+.perm-check.granted-locked{color:var(--muted);opacity:.65}
+.perm-check.granted-locked input{accent-color:#52b86a}
 .perm-check-hero{padding:17px 16px;border-color:rgba(255,94,0,.5);background:rgba(255,94,0,.08);font-size:17px}
 .perm-check-hero svg{width:25px;height:25px}
 .perm-check-hero input{width:22px;height:22px}
