@@ -65,3 +65,17 @@ export function shouldShowPermissionsDialog({
   if (hasOptedOut(local)) return false;
   return true;
 }
+
+/** Only skip the first-login dialog when both browser permissions are already on. */
+export async function permissionsAlreadyGranted({
+  notification = globalThis.Notification,
+  permissions = globalThis.navigator?.permissions,
+} = {}) {
+  if (notification?.permission !== 'granted' || !permissions?.query) return false;
+  try {
+    const location = await permissions.query({ name: 'geolocation' });
+    return location?.state === 'granted';
+  } catch {
+    return false;
+  }
+}

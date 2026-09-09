@@ -40,7 +40,7 @@ import { useAchievementQueue } from './useAchievementQueue.js';
 import { DebugMenu } from './DebugMenu.jsx';
 import { PermissionsDialog } from './PermissionsDialog.jsx';
 import { Lightbox } from './Lightbox.jsx';
-import { shouldShowPermissionsDialog } from './permissionPrefs.js';
+import { markSeenThisSession, permissionsAlreadyGranted, setOptedOut, shouldShowPermissionsDialog } from './permissionPrefs.js';
 import { clampMenuToViewport } from './contextMenu.js';
 import { useLongPress } from './useLongPress.js';
 
@@ -255,9 +255,10 @@ function Login({ onAuthed }) {
 
 function App(){ const [user,setUser]=useState(null); const [boot,setBoot]=useState(true); useEffect(()=>{backend.me().then(setUser).catch(()=>{}).finally(()=>setBoot(false))},[]); useEffect(()=>{ if(!supportsWebPush()) return; void registerPushServiceWorker(navigator, asset('sw.js')); },[]); if(boot) return <div className="boot">UNPACKING BUST BAY…</div>; return user?<Dashboard user={user} setUser={setUser}/>:<Login onAuthed={setUser}/> }
 
-function Dashboard({user,setUser}){ const [showPerms,setShowPerms]=useState(()=>shouldShowPermissionsDialog()); const [installGuide,setInstallGuide]=useState(null); const [busts,setBusts]=useState([]),[users,setUsers]=useState([]),[unlocks,setUnlocks]=useState([]); const [debugBusts,setDebugBusts]=useState([]),[debugUnlocks,setDebugUnlocks]=useState([]),[debugXp,setDebugXp]=useState(0); const [overlay,setOverlay]=useState(null),[selected,setSelected]=useState(null),[phase,setPhase]=useState('idle'),[pendingCtx,setPendingCtx]=useState(null),[toasts,setToasts]=useState([]),[unread,setUnread]=useState(0),[muted,setMuted]=useState(sfx.isMuted()); const bustRef=useRef([]); bustRef.current=busts; const unlocksRef=useRef([]); unlocksRef.current=unlocks; const usersRef=useRef([]); usersRef.current=users; const chargeSfx=useRef(null); const seenRealtimeEvents=useRef(new Set()); const [,tick]=useState(0);
+function Dashboard({user,setUser}){ const [showPerms,setShowPerms]=useState(false); const [installGuide,setInstallGuide]=useState(null); const [busts,setBusts]=useState([]),[users,setUsers]=useState([]),[unlocks,setUnlocks]=useState([]); const [debugBusts,setDebugBusts]=useState([]),[debugUnlocks,setDebugUnlocks]=useState([]),[debugXp,setDebugXp]=useState(0); const [overlay,setOverlay]=useState(null),[selected,setSelected]=useState(null),[phase,setPhase]=useState('idle'),[pendingCtx,setPendingCtx]=useState(null),[toasts,setToasts]=useState([]),[unread,setUnread]=useState(0),[muted,setMuted]=useState(sfx.isMuted()); const bustRef=useRef([]); bustRef.current=busts; const unlocksRef=useRef([]); unlocksRef.current=unlocks; const usersRef=useRef([]); usersRef.current=users; const chargeSfx=useRef(null); const seenRealtimeEvents=useRef(new Set()); const [,tick]=useState(0);
   const { current: badgeToast, enqueue: enqueueBadge, dismiss: dismissBadge } = useAchievementQueue(5200);
   const remaining = twoHoursRemainingMs(user.last_bust_timestamp); const locked = remaining > 0 && phase==='idle';
+  useEffect(()=>{ let active=true; if(!shouldShowPermissionsDialog()) return; void permissionsAlreadyGranted().then(granted=>{ if(!active) return; if(granted){ setOptedOut(true); markSeenThisSession(); return; } setShowPerms(true); }); return()=>{active=false}; },[]);
   /* Mirror the unread count onto the installed app icon. Supported on Android
      and desktop Chrome/Edge and on installed iOS web apps; a no-op elsewhere,
      and never allowed to throw into render. */

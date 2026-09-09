@@ -5,6 +5,7 @@ import {
   SESSION_SEEN_KEY,
   hasOptedOut,
   markSeenThisSession,
+  permissionsAlreadyGranted,
   seenThisSession,
   setOptedOut,
   shouldShowPermissionsDialog,
@@ -94,6 +95,21 @@ describe('permission preferences', () => {
     expect(() => setOptedOut(true, {})).not.toThrow();
     expect(hasOptedOut({})).toBe(false);
     expect(shouldShowPermissionsDialog({ local: {}, session: {} })).toBe(true);
+  });
+
+  it('recognizes when both browser permissions are already granted', async () => {
+    await expect(
+      permissionsAlreadyGranted({
+        notification: { permission: 'granted' },
+        permissions: { query: async () => ({ state: 'granted' }) },
+      })
+    ).resolves.toBe(true);
+    await expect(
+      permissionsAlreadyGranted({
+        notification: { permission: 'granted' },
+        permissions: { query: async () => ({ state: 'prompt' }) },
+      })
+    ).resolves.toBe(false);
   });
 });
 

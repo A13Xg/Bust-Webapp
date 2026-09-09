@@ -83,7 +83,7 @@
 .brand-mark{width:46px;height:46px;object-fit:contain;pointer-events:none;filter:drop-shadow(0 0 16px rgba(255,94,0,.55));position:absolute;left:50%;transform:translateX(-50%)}
 
 /* Glass top bar */
-header.top-bar{top:0;left:0;right:0;padding:10px clamp(12px,3vw,26px) 10px;padding-top:calc(10px + env(safe-area-inset-top,0px));background:linear-gradient(180deg,rgba(10,10,11,.92),rgba(10,10,11,.6) 72%,transparent);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+header.top-bar{top:0;left:0;right:0;padding:10px clamp(12px,3vw,26px) 10px;padding-top:calc(10px + env(safe-area-inset-top,0px));background:rgba(10,10,11,.78);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
 .profile-chip,.icon-btn{border-radius:14px;clip-path:none;transition:transform .15s ease,filter .2s ease,border-color .2s ease}
 .profile-chip:hover,.icon-btn:hover{filter:brightness(1.25);border-color:rgba(255,94,0,.45)}
 .profile-chip:active,.icon-btn:active{transform:scale(.95)}
@@ -108,11 +108,10 @@ header.top-bar{top:0;left:0;right:0;padding:10px clamp(12px,3vw,26px) 10px;paddi
 :focus-visible{outline:2px solid var(--orange);outline-offset:2px}
 
 /* Overlay refinement */
-.overlay{inset:calc(74px + env(safe-area-inset-top,0px)) 0 0;width:auto;height:auto;background:rgba(10,10,11,.84);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);padding-bottom:calc(34px + env(safe-area-inset-bottom,0px))}
+.overlay{inset:calc(66px + env(safe-area-inset-top,0px)) 0 0;width:auto;height:auto;background:rgba(10,10,11,.84);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);padding-bottom:calc(34px + env(safe-area-inset-bottom,0px))}
 .close{border-radius:14px;transition:transform .15s ease,filter .2s ease}
 .close:hover{filter:brightness(1.15)}
 .close:active{transform:scale(.92)}
-header.top-bar{top:8px}
 
 /* Tier medal backplates (public/badges/512) */
 .badge-medal{overflow:hidden}
