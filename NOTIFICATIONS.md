@@ -173,6 +173,28 @@ edits site settings — a RETRY there would visibly do nothing. A dismissed prom
 recoverable, and those get the button. Everything else gets a red X and a
 pointer at site settings.
 
+## Admin actions
+
+`BROADCAST_ADMINS` now gates two functions, and the check lives once in
+`supabase/functions/_shared/adminAuth.ts` so the two cannot drift:
+
+| Function | Power |
+| --- | --- |
+| `broadcast-test-notification` | Push arbitrary text to every registered device |
+| `admin-set-password` | **Set any account's password without the old one** |
+
+Be clear-eyed about the second: it is account takeover, strictly more powerful
+than the broadcast, and the same single secret authorises both. Whoever is on
+that list can seize any account in the crew. It logs every use with both the
+actor and the target, and the service-role key never leaves the function.
+
+Usernames became a safe thing to authorise on in
+`migrations/20260908_username_case_insensitive.sql`: a unique index on
+`lower(username)` makes `alexg` and `AlexG` one identity, and a trigger makes
+usernames immutable. Before that, `profiles_update` let any crew member rename
+themselves onto the allowlist. A digest of a profile UUID remains the stronger
+option and is still accepted.
+
 ## Deploying
 
 ```bash
@@ -185,6 +207,7 @@ supabase functions deploy notify-event
 supabase functions deploy dispatch-push-backstop
 supabase functions deploy dispatch-inactivity-reminders
 supabase functions deploy broadcast-test-notification
+supabase functions deploy admin-set-password
 ```
 
 Repository secrets required by `.github/workflows/notify-cron.yml`:

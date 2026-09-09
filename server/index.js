@@ -53,9 +53,12 @@ app.get('/api/health', async (req, res) => {
   catch (e) { res.status(503).json({ ok: false, db: 'unreachable', code: e.code || null, message: e.message }); }
 });
 
+// Compared case-insensitively and trimmed; the client ships this string anyway.
+const INVITE_CODE = 'bust4me';
+
 app.post('/api/signup', async (req, res) => {
   const { username = '', password = '', inviteCode = '' } = req.body || {};
-  if (inviteCode !== 'Bust4Me') return res.status(403).json({ error: 'That secret handshake is not on the list.' });
+  if (String(inviteCode).trim().toLowerCase() !== INVITE_CODE) return res.status(403).json({ error: 'That secret handshake is not on the list.' });
   if (!/^[a-zA-Z0-9_ -]{2,32}$/.test(username)) return res.status(400).json({ error: 'Username must be 2-32 simple characters' });
   if (String(password).length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
   const hash = await bcrypt.hash(password, 12);

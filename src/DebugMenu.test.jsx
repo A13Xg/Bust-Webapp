@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 
 const broadcastTestNotification = vi.fn();
-vi.mock('./backend.js', () => ({ backend: { broadcastTestNotification } }));
+const adminSetPassword = vi.fn();
+vi.mock('./backend.js', () => ({ backend: { broadcastTestNotification, adminSetPassword } }));
 
 const { DebugMenu } = await import('./DebugMenu.jsx');
 const { achievements } = await import('./rules.js');
@@ -17,13 +18,21 @@ const debug = {
   counts: { busts: 0, unlocks: 0 },
 };
 
-const open = () => render(<DebugMenu debug={debug} username="AlexG" logoSrc="/bust-logo.png" onClose={vi.fn()} />);
+const crew = [
+  { id: 'u-2', username: 'Zoe' },
+  { id: 'u-1', username: 'Ann' },
+];
+
+const open = () =>
+  render(<DebugMenu debug={debug} username="AlexG" users={crew} logoSrc="/bust-logo.png" onClose={vi.fn()} />);
 
 const tab = name => screen.getByRole('tab', { name });
 
 describe('DebugMenu', () => {
   beforeEach(() => {
     broadcastTestNotification.mockReset();
+    adminSetPassword.mockReset();
+    adminSetPassword.mockResolvedValue({ ok: true, username: 'Ann' });
     broadcastTestNotification.mockResolvedValue({ ok: true, attempted: 3, delivered: 3 });
   });
 
@@ -135,5 +144,60 @@ describe('DebugMenu', () => {
     fireEvent.change(filter, { target: { value: 'zzzz-no-such-thing' } });
     expect(document.querySelectorAll('.ach-picker-row').length).toBe(0);
     expect(screen.getByText(/Nothing matches/)).toBeTruthy();
+  });
+
+  it('lists the crew alphabetically and needs both a user and a long password', () => {
+    open();
+    fireEvent.click(tab('ACCOUNTS'));
+    const options = [...document.querySelectorAll('select option')].map(o => o.textContent);
+    expect(options.slice(1)).toEqual(['Ann', 'Zoe']);
+
+    const button = screen.getByText('FORCE PASSWORD RESET');
+    expect(button.disabled).toBe(true);
+
+    fireEvent.change(document.querySelector('select'), { target: { value: 'u-1' } });
+    fireEvent.change(screen.getByLabelText(/New password/i), { target: { value: 'short' } });
+    expect(screen.getByText(/at least 6 characters/i)).toBeTruthy();
+    expect(button.disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText(/New password/i), { target: { value: 'long-enough' } });
+    expect(button.disabled).toBe(false);
+  });
+
+  /* Account takeover must never be one click away. */
+  it('does not reset a password until the confirmation is accepted', () => {
+    open();
+    fireEvent.click(tab('ACCOUNTS'));
+    fireEvent.change(document.querySelector('select'), { target: { value: 'u-1' } });
+    fireEvent.change(screen.getByLabelText(/New password/i), { target: { value: 'long-enough' } });
+
+    fireEvent.click(screen.getByText('FORCE PASSWORD RESET'));
+    expect(adminSetPassword).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText('CANCEL'));
+    expect(adminSetPassword).not.toHaveBeenCalled();
+  });
+
+  it('resets on confirmation, reports it, and clears the field', async () => {
+    open();
+    fireEvent.click(tab('ACCOUNTS'));
+    fireEvent.change(document.querySelector('select'), { target: { value: 'u-1' } });
+    fireEvent.change(screen.getByLabelText(/New password/i), { target: { value: 'long-enough' } });
+    fireEvent.click(screen.getByText('FORCE PASSWORD RESET'));
+    fireEvent.click(screen.getByText('DO IT'));
+
+    expect(adminSetPassword).toHaveBeenCalledWith({ userId: 'u-1', password: 'long-enough' });
+    expect(await screen.findByText(/Password updated for Ann/)).toBeTruthy();
+    expect(screen.getByLabelText(/New password/i).value).toBe('');
+  });
+
+  it('surfaces a refusal from the server', async () => {
+    adminSetPassword.mockRejectedValue(new Error('This account is not allowed to perform admin actions.'));
+    open();
+    fireEvent.click(tab('ACCOUNTS'));
+    fireEvent.change(document.querySelector('select'), { target: { value: 'u-1' } });
+    fireEvent.change(screen.getByLabelText(/New password/i), { target: { value: 'long-enough' } });
+    fireEvent.click(screen.getByText('FORCE PASSWORD RESET'));
+    fireEvent.click(screen.getByText('DO IT'));
+    expect(await screen.findByText(/not allowed to perform admin actions/)).toBeTruthy();
   });
 });

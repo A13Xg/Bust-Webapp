@@ -622,7 +622,7 @@ function Profile({user,setUser,busts,unlocks,users,onOpen,debug,mythicIds}){
     <div className="feed two-col">{own.length?own.slice(0,10).map(b=><BustCard key={b.id} b={b} onOpen={onOpen} mythicIds={mythicIds}/>):<EmptyState text="Your ledger is empty. The button awaits."/>}</div>
     <div className="logout-row"><button className="mf-button ghost" onClick={async()=>{await backend.logout();setUser(null)}}><LogOut/> LOG OUT</button><button className="mf-button ghost danger no-callout" {...debugPress.handlers} onContextMenu={e=>{ e.preventDefault(); setCtx({x:e.clientX,y:e.clientY}); }} onClick={()=>{ if(debugPress.consumeClick()) return; setConfirmDel(true); }}>DELETE ACCOUNT</button></div>
     {ctx&&<DebugContextMenu at={ctx} onClose={()=>setCtx(null)} onOpenDebug={()=>{setCtx(null);setShowDebug(true);}}/>}
-    {showDebug&&debug&&<DebugMenu debug={debug} username={user.username} logoSrc={asset('bust-logo.png')} onClose={()=>setShowDebug(false)}/>}
+    {showDebug&&debug&&<DebugMenu debug={debug} username={user.username} users={users} logoSrc={asset('bust-logo.png')} onClose={()=>setShowDebug(false)}/>}
     {confirmDel&&<DeleteAccountModal onClose={()=>setConfirmDel(false)} onDeleted={()=>setUser(null)}/>}
   </div> }
 function Alerts({busts,onOpen,mythicIds}){ return <div className="feed two-col">{busts.map(b=><BustCard key={b.id} b={b} onOpen={onOpen} mythicIds={mythicIds}/>)}</div> }

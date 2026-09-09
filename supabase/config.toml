@@ -19,3 +19,6 @@ verify_jwt = false
 
 [functions.broadcast-test-notification]
 verify_jwt = true
+
+[functions.admin-set-password]
+verify_jwt = true

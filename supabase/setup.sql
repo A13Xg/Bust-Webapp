@@ -285,6 +285,34 @@ begin
   end;
 end $$;
 
+-- ---------- case-insensitive, immutable usernames ----------
+-- See migrations/20260908_username_case_insensitive.sql for the reasoning.
+-- `unique` on text is case-sensitive, so this index is what makes 'AlexG' and
+-- 'alexg' the same identity; the trigger stops a profile being renamed onto a
+-- name freed up by a deleted account.
+create unique index if not exists profiles_username_lower_key
+  on public.profiles (lower(username));
+
+create or replace function public.block_username_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if new.username is distinct from old.username then
+    raise exception 'Username cannot be changed';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists profiles_block_username_change on public.profiles;
+create trigger profiles_block_username_change
+  before update on public.profiles
+  for each row
+  execute function public.block_username_change();
+
 -- ---------- Verification snippets (run manually in SQL editor) ----------
 -- 1) Arbitrary direct inserts should fail under RLS:
 --    insert into public.achievements (user_id, achievement_type)

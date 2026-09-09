@@ -10,6 +10,9 @@ create table if not exists users (
   tagline text,
   showcase text
 );
+-- One identity per name regardless of case. Without this, 'AlexG' and 'alexg'
+-- are two rows and /api/login's lower(username) match silently takes rows[0].
+create unique index if not exists users_username_lower_key on users (lower(username));
 alter table users add column if not exists tagline text;
 alter table users add column if not exists showcase text;
 create table if not exists busts (

@@ -22,6 +22,7 @@ const TABS = [
   { id: 'bust', label: 'BUST' },
   { id: 'progress', label: 'PROGRESS' },
   { id: 'notify', label: 'NOTIFY' },
+  { id: 'accounts', label: 'ACCOUNTS' },
   { id: 'tools', label: 'TOOLS' },
   { id: 'session', label: 'SESSION' },
 ];
@@ -243,9 +244,117 @@ function ToolsTab({ logoSrc }) {
   );
 }
 
+/* ------------------------------ Accounts tab ------------------------------ */
+
+/*
+ * Force-set another account's password. This is account takeover, and it is
+ * gated by the same allowlist as the broadcast — see _shared/adminAuth.ts. The
+ * service-role key that performs it never reaches the browser; all that leaves
+ * here is a user id and a new password over an authenticated call.
+ */
+function AccountsTab({ users }) {
+  const [target, setTarget] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState(false);
+  const [state, setState] = useState({ status: 'idle', message: '' });
+
+  const roster = useMemo(
+    () => (users || []).slice().sort((a, b) => String(a.username).localeCompare(String(b.username))),
+    [users]
+  );
+  const chosen = roster.find(user => user.id === target);
+  const tooShort = password.length > 0 && password.length < 6;
+  const ready = Boolean(target) && password.length >= 6;
+
+  async function apply() {
+    setConfirm(false);
+    setState({ status: 'working', message: '' });
+    try {
+      const result = await backend.adminSetPassword({ userId: target, password });
+      if (!result?.ok) {
+        setState({ status: 'error', message: result?.error || result?.reason || 'Password update failed' });
+        return;
+      }
+      setState({ status: 'done', message: `Password updated for ${result.username || chosen?.username}.` });
+      setPassword('');
+    } catch (error) {
+      setState({ status: 'error', message: error.message || 'Password update failed' });
+    }
+  }
+
+  return (
+    <div className="debug-panel">
+      <p className="showcase-hint danger-hint">
+        Sets an account&rsquo;s password without knowing the old one. The owner is <strong>not</strong> told, and their
+        existing sessions keep working until they sign out.
+      </p>
+
+      <label className="debug-note">
+        Account
+        <select value={target} onChange={e => setTarget(e.target.value)}>
+          <option value="">Select an operator&hellip;</option>
+          {roster.map(user => (
+            <option key={user.id} value={user.id}>
+              {user.username}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="debug-note">
+        New password
+        <input
+          type="text"
+          value={password}
+          maxLength={200}
+          autoComplete="off"
+          placeholder="At least 6 characters"
+          onChange={e => setPassword(e.target.value)}
+        />
+      </label>
+
+      {tooShort && <p className="broadcast-warn">Password must be at least 6 characters.</p>}
+      {state.status === 'error' && <p className="broadcast-warn">{state.message}</p>}
+      {state.status === 'done' && <p className="broadcast-ok">{state.message}</p>}
+
+      <div className="picker-actions">
+        <button
+          className="mf-button danger"
+          disabled={!ready || state.status === 'working'}
+          onClick={() => setConfirm(true)}
+        >
+          {state.status === 'working' ? 'UPDATING…' : 'FORCE PASSWORD RESET'}
+        </button>
+      </div>
+
+      {confirm &&
+        createPortal(
+          <div className="confirm-back" onClick={() => setConfirm(false)}>
+            <div className="confirm-box mf-frame" onClick={e => e.stopPropagation()}>
+              <h2>Reset {chosen?.username}&rsquo;s password?</h2>
+              <p>
+                They will only be able to sign in with the new password. They are not notified, and cannot recover the
+                old one.
+              </p>
+              <div className="picker-actions">
+                <button className="mf-button ghost" onClick={() => setConfirm(false)}>
+                  CANCEL
+                </button>
+                <button className="mf-button danger" onClick={apply}>
+                  DO IT
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+    </div>
+  );
+}
+
 /* ------------------------------- Debug menu ------------------------------- */
 
-export function DebugMenu({ debug, username, logoSrc, onClose }) {
+export function DebugMenu({ debug, username, users, logoSrc, onClose }) {
   const [tab, setTab] = useState('bust');
   const [form, setForm] = useState({
     note: 'Debug bust',
@@ -358,6 +467,7 @@ export function DebugMenu({ debug, username, logoSrc, onClose }) {
         )}
 
         {tab === 'notify' && <NotifyTab username={username} />}
+        {tab === 'accounts' && <AccountsTab users={users} />}
         {tab === 'tools' && <ToolsTab logoSrc={logoSrc} />}
 
         {tab === 'session' && (
