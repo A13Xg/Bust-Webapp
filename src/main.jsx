@@ -433,7 +433,7 @@ function Dashboard({user,setUser,initialShowPerms}){ const [showPerms,setShowPer
         }
       }
     }); return unsub; },[mergeRecentBusts, refresh, setUser, user.id]);
-  useEffect(()=>{ if(locked&&!muted){ const h=sfx.play('drip',{loop:true,volume:.22}); const t=setTimeout(()=>h.stop(),20000); return()=>{ clearTimeout(t); h.stop(); }; } },[locked,muted]);
+  useEffect(()=>{ if(locked&&!muted){ const h=sfx.play('drip',{loop:true,volume:.22}); const t=setTimeout(()=>h.stop(),7000); return()=>{ clearTimeout(t); h.stop(); }; } },[locked,muted]);
   /* Environmental + market context for a bust. Every lookup is best-effort: a
      denied location, an offline weather API or an unreachable price feed each
      degrade to null rather than failing the bust. The BTC fetch is started

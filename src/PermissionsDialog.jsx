@@ -56,7 +56,7 @@ async function completeWithin(task, timeoutMs = PERMISSION_ATTEMPT_TIMEOUT_MS) {
   }
 }
 
-function StatusRow({ icon, label, outcome, busy, onRetry, installRequired = false, manualAllowRequired = false }) {
+function StatusRow({ icon, label, outcome, busy, onRetry, installRequired = false, manualAllowOutcomes = [] }) {
   const failed = outcome !== OUTCOME.granted && outcome !== 'idle' && !busy;
   const hint = failed ? outcomeHint(outcome) : null;
   return (
@@ -71,7 +71,7 @@ function StatusRow({ icon, label, outcome, busy, onRetry, installRequired = fals
       {installRequired && outcome === OUTCOME.unsupported && (
         <strong className="perm-row-install-required">Must Install App</strong>
       )}
-      {manualAllowRequired && outcome === OUTCOME.timeout && (
+      {manualAllowOutcomes.includes(outcome) && (
         <strong className="perm-row-install-required">Try Manual Allowing</strong>
       )}
       {failed && isRetryable(outcome) && (
@@ -243,6 +243,7 @@ export function PermissionsDialog({
                 outcome={results.location}
                 busy={busy === 'location'}
                 onRetry={askLocation}
+                manualAllowOutcomes={[OUTCOME.denied, OUTCOME.timeout, OUTCOME.unavailable]}
               />
             )}
             {choices.notifications && (
@@ -253,7 +254,7 @@ export function PermissionsDialog({
                 busy={busy === 'notifications'}
                 onRetry={askNotifications}
                 installRequired
-                manualAllowRequired
+                manualAllowOutcomes={[OUTCOME.timeout]}
               />
             )}
             <div className="picker-actions">

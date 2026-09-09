@@ -193,13 +193,22 @@ describe('PermissionsDialog', () => {
   });
 
   /* A denial cannot be re-prompted, so a RETRY button there would do nothing. */
-  it('shows no retry for a denial, only the settings hint', async () => {
+  it('shows manual-allowing guidance when location access is blocked', async () => {
     setup({ location: OUTCOME.denied });
     click('OKAY');
     click('ACCEPT');
     await waitFor(() => expect(row('Location').className).toContain('bad'));
     expect(row('Location').querySelector('.perm-retry')).toBeNull();
     expect(row('Location').textContent).toMatch(/site settings/i);
+    expect(row('Location').textContent).toContain('Try Manual Allowing');
+  });
+
+  it('shows manual-allowing guidance when location access times out', async () => {
+    setup({ location: OUTCOME.timeout });
+    click('OKAY');
+    click('ACCEPT');
+    await waitFor(() => expect(row('Location').textContent).toContain('TIMED OUT'));
+    expect(row('Location').textContent).toContain('Try Manual Allowing');
   });
 
   it('treats a dismissed notification prompt as retryable', async () => {
