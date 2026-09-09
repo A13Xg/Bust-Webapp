@@ -21,6 +21,15 @@ describe('notification copy', () => {
     expect(INACTIVITY_MESSAGE_CATALOG.every(entry => entry.text.trim().length > 0)).toBe(true);
   });
 
+  it('keeps inactivity reminder entries shaped for weighted selection', () => {
+    for (const entry of INACTIVITY_MESSAGE_CATALOG) {
+      expect(typeof entry.text).toBe('string');
+      expect(entry.text.trim()).not.toBe('');
+      expect(Number.isFinite(entry.weight)).toBe(true);
+      expect(entry.weight).toBeGreaterThan(0);
+    }
+  });
+
   it('picks a variant deterministically so two devices never disagree', () => {
     const a = buildBustNotification({ username: 'Rex', bustId: 'b-1' });
     const b = buildBustNotification({ username: 'Rex', bustId: 'b-1' });
