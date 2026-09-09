@@ -92,4 +92,17 @@ describe('useLongPress', () => {
     hold(LONG_PRESS_MS);
     expect(onLongPress).not.toHaveBeenCalled();
   });
+
+  it('fires once when a second finger lands mid-hold, and leaves no orphan timer', () => {
+    fireEvent.pointerDown(button(), { clientX: 10, clientY: 10, pointerType: 'touch' });
+    hold(200);
+    fireEvent.pointerDown(button(), { clientX: 12, clientY: 12, pointerType: 'touch' });
+    hold(LONG_PRESS_MS);
+    expect(onLongPress).toHaveBeenCalledTimes(1);
+
+    // The first timer must not still be pending behind the second.
+    fireEvent.pointerUp(button());
+    hold(LONG_PRESS_MS * 2);
+    expect(onLongPress).toHaveBeenCalledTimes(1);
+  });
 });

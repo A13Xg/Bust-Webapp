@@ -32,6 +32,9 @@ export function useLongPress(onLongPress, { delay = LONG_PRESS_MS } = {}) {
     event => {
       // Right-click stays with onContextMenu; only a primary press holds.
       if (event.pointerType === 'mouse' && event.button !== 0) return;
+      // A second finger landing mid-hold would otherwise orphan the first
+      // timer: both would fire, and only the newer one could be cleared.
+      cancel();
       fired.current = false;
       const point = { x: event.clientX, y: event.clientY };
       origin.current = point;
@@ -41,7 +44,7 @@ export function useLongPress(onLongPress, { delay = LONG_PRESS_MS } = {}) {
         onLongPress(point);
       }, delay);
     },
-    [delay, onLongPress]
+    [cancel, delay, onLongPress]
   );
 
   const onPointerMove = useCallback(

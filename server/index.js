@@ -13,7 +13,16 @@ const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 const PORT = process.env.PORT || 8787;
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
+/*
+ * No fallback on purpose. A deploy that forgets this used to boot silently on a
+ * publicly-known secret, and anyone could then mint a token for any user. Refuse
+ * to start instead — the same fail-closed posture deploy.yml uses for VAPID.
+ */
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('[fatal] JWT_SECRET is not set. Refusing to start: every session token would be forgeable.');
+  process.exit(1);
+}
 const NETWORK_CODES = new Set(['ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNRESET']);
 const routeRateWindow = new Map();
 
@@ -27,9 +36,47 @@ function dbErrorResponse(res, e) {
   if (NETWORK_CODES.has(e.code)) return res.status(503).json({ error: 'Database is unreachable; check DATABASE_URL or network/DNS access' });
   if (e.code === '42P01') return res.status(503).json({ error: 'Database tables are missing — run: npm run db:migrate' });
   if (e.code === '42703') return res.status(503).json({ error: 'Database schema is outdated — run: npm run db:migrate' });
-  return res.status(500).json({ error: `Database error${e.code ? ` (${e.code})` : ''}: ${e.message}` });
+  // Postgres messages name columns, constraints and sometimes row values. The
+  // code is safe to echo for support; the message is not.
+  return res.status(500).json({ error: `Database error${e.code ? ` (${e.code})` : ''}. Check server logs.` });
 }
 async function auth(req, res, next) { try { const raw = (req.headers.authorization || '').replace(/^Bearer\s+/i, ''); if (!raw) throw new Error('missing'); const payload = jwt.verify(raw, JWT_SECRET); const { rows } = await query('select * from users where id=$1', [payload.id]); if (!rows[0]) throw new Error('missing user'); req.user = rows[0]; next(); } catch { res.status(401).json({ error: 'Authentication required' }); } }
+/*
+ * The window map is swept rather than left to grow: entries are keyed by user or
+ * IP and were never deleted, so every account that ever hit a limited route
+ * stayed resident for the life of the process.
+ */
+const RATE_SWEEP_MS = 10 * 60 * 1000;
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of routeRateWindow) {
+    if (now - entry.startedAt > entry.windowMs) routeRateWindow.delete(key);
+  }
+}, RATE_SWEEP_MS).unref();
+
+function rateLimit({ keyPrefix, windowMs, max, keyFor }) {
+  return (req, res, next) => {
+    const id = keyFor(req);
+    if (!id) return next();
+    const key = `${keyPrefix}:${id}`;
+    const now = Date.now();
+    const entry = routeRateWindow.get(key);
+    if (!entry || now - entry.startedAt > windowMs) {
+      routeRateWindow.set(key, { startedAt: now, count: 1, windowMs });
+      return next();
+    }
+    if (entry.count >= max) return res.status(429).json({ error: 'Too many requests, slow down.' });
+    entry.count += 1;
+    return next();
+  };
+}
+
+/* Login and signup are unauthenticated, so they can only be keyed by IP. Without
+ * this there is no brake at all on online password guessing against a 6-char
+ * minimum. Behind a proxy this needs `app.set('trust proxy', …)` to be accurate. */
+const clientIp = req => req.ip || req.socket?.remoteAddress || null;
+const authRateLimit = () => rateLimit({ keyPrefix: 'auth', windowMs: 15 * 60 * 1000, max: 20, keyFor: clientIp });
+
 function perUserRateLimit({ keyPrefix, windowMs, max }) {
   return (req, res, next) => {
     const userId = req.user?.id;
@@ -38,7 +85,7 @@ function perUserRateLimit({ keyPrefix, windowMs, max }) {
     const now = Date.now();
     const entry = routeRateWindow.get(key);
     if (!entry || now - entry.startedAt > windowMs) {
-      routeRateWindow.set(key, { startedAt: now, count: 1 });
+      routeRateWindow.set(key, { startedAt: now, count: 1, windowMs });
       return next();
     }
     if (entry.count >= max) return res.status(429).json({ error: 'Too many requests, slow down.' });
@@ -56,7 +103,7 @@ app.get('/api/health', async (req, res) => {
 // Compared case-insensitively and trimmed; the client ships this string anyway.
 const INVITE_CODE = 'bust4me';
 
-app.post('/api/signup', async (req, res) => {
+app.post('/api/signup', authRateLimit(), async (req, res) => {
   const { username = '', password = '', inviteCode = '' } = req.body || {};
   if (String(inviteCode).trim().toLowerCase() !== INVITE_CODE) return res.status(403).json({ error: 'That secret handshake is not on the list.' });
   if (!/^[a-zA-Z0-9_ -]{2,32}$/.test(username)) return res.status(400).json({ error: 'Username must be 2-32 simple characters' });
@@ -72,7 +119,7 @@ app.post('/api/signup', async (req, res) => {
   }
 });
 
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', authRateLimit(), async (req, res) => {
   const { username = '', password = '' } = req.body || {};
   try {
     const { rows } = await query('select * from users where lower(username)=lower($1)', [username.trim()]);

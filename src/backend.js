@@ -158,12 +158,20 @@ const staticBackend = {
     return toUser(ins.data);
   },
   async logout() { const sb = await getSupa(); await sb.auth.signOut(); },
+  /* Deletes the auth user, not just the profile. Removing only the profile left
+   * the auth.users row behind holding this username's synthetic email, so
+   * signing up again with the same name failed as "Username already exists".
+   * Deleting the auth user cascades the profile away and frees the name. */
   async deleteAccount() {
     const sb = await getSupa();
     const { data: { user } } = await sb.auth.getUser();
     if (!user) throw new Error('Not signed in');
-    const { error } = await sb.from('profiles').delete().eq('id', user.id);
-    if (error) throw new Error(error.message);
+    const { data, error } = await sb.functions.invoke('delete-account', { body: {} });
+    if (error) {
+      const detail = await readFunctionError(error);
+      throw new Error(detail || error.message || 'Account deletion failed');
+    }
+    if (data?.error) throw new Error(data.error);
     await sb.auth.signOut();
   },
   async dashboard() {

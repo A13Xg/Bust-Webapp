@@ -10,7 +10,7 @@ const row = name => screen.getByText(name).closest('.perm-row');
 
 function setup({ location = OUTCOME.granted, push = { ok: true }, order = [] } = {}) {
   const onDone = vi.fn();
-  const install = { show: vi.fn() };
+  const install = { show: vi.fn(async () => ({ outcome: 'installed', guide: null })) };
   const requestLocationFn = vi.fn(async () => {
     order.push('location');
     return {
@@ -140,7 +140,8 @@ describe('PermissionsDialog', () => {
 
     click('OKAY');
     expect(install.show).toHaveBeenCalledTimes(1);
-    expect(onDone).toHaveBeenCalled();
+    // Closing now waits for the install prompt to resolve, so onDone is async.
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
   });
 
   it('skips installing when Install App was unchecked', async () => {
@@ -200,5 +201,55 @@ describe('PermissionsDialog', () => {
     click('ACCEPT');
     await waitFor(() => expect(onDone).toHaveBeenCalled());
     expect(install.show).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands the install guide up so it can be shown in the lightbox', async () => {
+    const onDone = vi.fn();
+    render(
+      <PermissionsDialog
+        onDone={onDone}
+        install={{ show: async () => ({ outcome: 'instructions', guide: '/assets/images/iOS_webappGuide.png' }) }}
+        enablePush={async () => ({ ok: true })}
+        getNotificationPermission={() => 'default'}
+        requestLocationFn={async () => ({ outcome: OUTCOME.granted, coords: null })}
+      />
+    );
+    click('OKAY');
+    click('ACCEPT');
+    await waitFor(() => expect(row('Notifications').className).toContain('ok'));
+    click('OKAY');
+    await waitFor(() => expect(onDone).toHaveBeenCalledWith({ guide: '/assets/images/iOS_webappGuide.png' }));
+  });
+
+  it('reports no guide when the native prompt installed the app', async () => {
+    const { onDone } = setup();
+    click('OKAY');
+    click('ACCEPT');
+    await waitFor(() => expect(row('Notifications').className).toContain('ok'));
+    click('OKAY');
+    await waitFor(() => expect(onDone).toHaveBeenCalledWith({ guide: null }));
+  });
+
+  /* No close button, so a throw here would strand the user permanently. */
+  it('still closes when the install hook throws', async () => {
+    const onDone = vi.fn();
+    render(
+      <PermissionsDialog
+        onDone={onDone}
+        install={{
+          show: () => {
+            throw new Error('platform sniff exploded');
+          },
+        }}
+        enablePush={async () => ({ ok: true })}
+        getNotificationPermission={() => 'default'}
+        requestLocationFn={async () => ({ outcome: OUTCOME.granted, coords: null })}
+      />
+    );
+    click('OKAY');
+    click('ACCEPT');
+    await waitFor(() => expect(row('Notifications').className).toContain('ok'));
+    click('OKAY');
+    await waitFor(() => expect(onDone).toHaveBeenCalledWith({ guide: null }));
   });
 });

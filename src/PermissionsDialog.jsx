@@ -108,7 +108,7 @@ export function PermissionsDialog({
     wantInstall.current = choices.install;
 
     if (!choices.location && !choices.notifications) {
-      finish(choices.install);
+      void finish(choices.install);
       return;
     }
 
@@ -117,11 +117,27 @@ export function PermissionsDialog({
     if (choices.notifications) await askNotifications();
   }
 
-  function finish(shouldInstall = wantInstall.current) {
-    // Runs inside the click handler so the native install prompt still has a
-    // user gesture to spend.
-    if (shouldInstall) void install?.show?.();
-    onDone();
+  /*
+   * `show()` is invoked synchronously from the click handler so the native
+   * install prompt still has a user gesture to spend; awaiting it afterwards
+   * only delays closing until the prompt resolves.
+   *
+   * A synchronous throw in here used to escape before onDone(), and since this
+   * dialog has no close button that stranded the user with no way out. Hence
+   * the finally.
+   */
+  async function finish(shouldInstall = wantInstall.current) {
+    let guide = null;
+    try {
+      if (shouldInstall) {
+        const result = await install?.show?.();
+        guide = result?.guide || null;
+      }
+    } catch (error) {
+      console.warn('[install] failed', error);
+    } finally {
+      onDone({ guide });
+    }
   }
 
   return createPortal(
@@ -194,7 +210,7 @@ export function PermissionsDialog({
               />
             )}
             <div className="picker-actions">
-              <button className="mf-button" disabled={Boolean(busy)} onClick={() => finish()}>
+              <button className="mf-button" disabled={Boolean(busy)} onClick={() => void finish()}>
                 OKAY
               </button>
             </div>

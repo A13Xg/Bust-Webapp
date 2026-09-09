@@ -1,5 +1,6 @@
 import globals from 'globals';
 import react from 'eslint-plugin-react';
+import reactHooks from 'eslint-plugin-react-hooks';
 
 const rules = {
   'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
@@ -21,7 +22,7 @@ export default [
   },
   {
     files: ['src/**/*.{js,jsx}', 'server/**/*.js', 'scripts/**/*.mjs'],
-    plugins: { react },
+    plugins: { react, 'react-hooks': reactHooks },
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
@@ -33,7 +34,15 @@ export default [
         ecmaFeatures: { jsx: true },
       },
     },
-    rules: { ...rules, 'react/jsx-uses-vars': 'error' },
+    rules: {
+      ...rules,
+      'react/jsx-uses-vars': 'error',
+      // Without these, a wrong hook dependency or a conditional hook is
+      // invisible to CI — exactly the class of bug the hook-heavy dialogs and
+      // the debug menu are most likely to grow.
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
+    },
   },
   {
     // The service worker runs in a different global scope (`self`, `clients`,

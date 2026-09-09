@@ -5,6 +5,7 @@
  * through sendToSubscriptions() so the failure handling — pruning dead
  * endpoints, recording delivery health — is identical everywhere.
  */
+import { fetchAllPages } from '../../../src/fetchAllPages.js';
 import webpush from 'npm:web-push@3.6.7';
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 
@@ -82,7 +83,9 @@ export async function sendToSubscriptions(
 ): Promise<DeliveryResult> {
   configureVapid();
   const perSubscription = typeof payload === 'function' ? payload : null;
-  const sharedBody = perSubscription ? null : JSON.stringify(payload);
+  // `?? {}` matters: JSON.stringify(undefined) is undefined, which would fall
+  // through the ?? below into perSubscription!(sub) with perSubscription null.
+  const sharedBody = perSubscription ? null : JSON.stringify(payload ?? {});
   const result: DeliveryResult = { attempted: subscriptions.length, delivered: 0, pruned: 0, failures: [] };
   const nowIso = new Date().toISOString();
 
@@ -147,11 +150,14 @@ export async function sendToSubscriptions(
 
 /** Every subscription belonging to anyone other than `excludeUserId`. */
 export async function subscriptionsForCrew(admin: SupabaseClient, excludeUserId: string | null) {
-  let query = admin.from('push_subscriptions').select('id,user_id,endpoint,p256dh,auth');
-  if (excludeUserId) query = query.neq('user_id', excludeUserId);
-  const { data, error } = await query;
-  if (error) throw new Error(error.message);
-  return (data || []) as PushSubscriptionRow[];
+  // Paginated: PostgREST caps an unranged select at 1000 rows, which would have
+  // silently delivered to the first 1000 endpoints and reported that count as
+  // if it were the whole crew.
+  return (await fetchAllPages((from: number, to: number) => {
+    let query = admin.from('push_subscriptions').select('id,user_id,endpoint,p256dh,auth').range(from, to);
+    if (excludeUserId) query = query.neq('user_id', excludeUserId);
+    return query;
+  })) as PushSubscriptionRow[];
 }
 
 /**

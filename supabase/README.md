@@ -25,6 +25,7 @@ supabase functions deploy dispatch-push-backstop
 supabase functions deploy dispatch-inactivity-reminders
 supabase functions deploy broadcast-test-notification
 supabase functions deploy admin-set-password
+supabase functions deploy delete-account
 ```
 
 Set function secrets before deploying reminder delivery:
