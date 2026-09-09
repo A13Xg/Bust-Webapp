@@ -106,7 +106,9 @@ function NotifyTab({ username, users }) {
     () => (users || []).slice().sort((a, b) => String(a.username).localeCompare(String(b.username))),
     [users]
   );
-  const matchingRecipients = roster.filter(user => user.username.toLowerCase().includes(recipientQuery.trim().toLowerCase()));
+  const matchingRecipients = roster.filter(user =>
+    user.username.toLowerCase().includes(recipientQuery.trim().toLowerCase())
+  );
   const selectedNames = roster.filter(user => recipientIds.includes(user.id)).map(user => user.username);
 
   /* Preview uses your own name for {{USER}}, which is only exact for your own
@@ -121,7 +123,11 @@ function NotifyTab({ username, users }) {
     setConfirm(false);
     setState({ status: 'sending', message: '' });
     try {
-      const result = await backend.broadcastTestNotification({ title, body, userIds: singleUser ? recipientIds : null });
+      const result = await backend.broadcastTestNotification({
+        title,
+        body,
+        userIds: singleUser ? recipientIds : null,
+      });
       if (!result?.ok) {
         setState({ status: 'error', message: result?.error || result?.reason || 'Broadcast failed' });
         return;
@@ -139,7 +145,8 @@ function NotifyTab({ username, users }) {
     <div className="debug-panel">
       <p className="showcase-hint danger-hint">
         Unlike the rest of this menu, this sends a real push notification to{' '}
-        <strong>{singleUser ? 'the selected users' : 'every registered device'}</strong>, including your own when selected.
+        <strong>{singleUser ? 'the selected users' : 'every registered device'}</strong>, including your own when
+        selected.
       </p>
 
       <label className="debug-note">
@@ -170,7 +177,9 @@ function NotifyTab({ username, users }) {
                 type="checkbox"
                 disabled={!singleUser}
                 checked={recipientIds.includes(user.id)}
-                onChange={e => setRecipientIds(ids => e.target.checked ? [...ids, user.id] : ids.filter(id => id !== user.id))}
+                onChange={e =>
+                  setRecipientIds(ids => (e.target.checked ? [...ids, user.id] : ids.filter(id => id !== user.id)))
+                }
               />
               {user.username}
             </label>
@@ -245,7 +254,11 @@ function NotifyTab({ username, users }) {
           <div className="confirm-back" onClick={() => setConfirm(false)}>
             <div className="confirm-box mf-frame" onClick={e => e.stopPropagation()}>
               <h2>{singleUser ? 'Send to selected users?' : 'Send to everyone?'}</h2>
-              <p>{singleUser ? `This pushes to ${selectedNames.join(', ')}. It cannot be recalled.` : 'This pushes to every registered device on the crew. It cannot be recalled.'}</p>
+              <p>
+                {singleUser
+                  ? `This pushes to ${selectedNames.join(', ')}. It cannot be recalled.`
+                  : 'This pushes to every registered device on the crew. It cannot be recalled.'}
+              </p>
               <div className="broadcast-preview">
                 <strong>{preview.title || <i>(no title)</i>}</strong>
                 <p>{preview.body || <i>(no body)</i>}</p>
