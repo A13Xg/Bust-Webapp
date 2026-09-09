@@ -219,6 +219,14 @@ describe('PermissionsDialog', () => {
     expect(row('Notifications').querySelector('.perm-row-install-required')).toBeTruthy();
   });
 
+  it('suggests manual allowing when notification checks time out', async () => {
+    setup({ push: () => null });
+    click('OKAY');
+    click('ACCEPT');
+    await waitFor(() => expect(row('Notifications').textContent).toContain('TIMED OUT'));
+    expect(row('Notifications').textContent).toContain('Try Manual Allowing');
+  });
+
   it('only asks for what was checked', async () => {
     const { requestLocationFn, enablePush } = setup();
     click('OKAY');
