@@ -460,6 +460,7 @@ img,svg,canvas{max-width:100%}
 .perm-row.bad .perm-row-state{color:#ff6a55}
 .perm-row-x{width:15px;height:15px}
 .perm-row-hint{grid-column:2/-1;color:var(--muted);font:700 12px Tahoma,sans-serif;line-height:1.4}
+.perm-row-install-required{grid-column:2/-1;color:var(--orange);font:900 15px Tahoma,sans-serif;line-height:1.2;text-transform:uppercase}
 .perm-retry{grid-column:2/-1;justify-self:start;padding:8px 13px;font-size:12px;gap:7px}
 .perm-retry svg{width:15px;height:15px}
 

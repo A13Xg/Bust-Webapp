@@ -216,6 +216,7 @@ describe('PermissionsDialog', () => {
     click('ACCEPT');
     await waitFor(() => expect(row('Notifications').textContent).toContain('NOT SUPPORTED'));
     expect(row('Notifications').textContent).toContain('Must Install App');
+    expect(row('Notifications').querySelector('.perm-row-install-required')).toBeTruthy();
   });
 
   it('only asks for what was checked', async () => {
