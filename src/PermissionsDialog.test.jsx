@@ -341,6 +341,7 @@ describe('PermissionsDialog', () => {
   /* No close button, so a throw here would strand the user permanently. */
   it('still closes when the install hook throws', async () => {
     const onDone = vi.fn();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     render(
       <PermissionsDialog
         onDone={onDone}
@@ -359,5 +360,7 @@ describe('PermissionsDialog', () => {
     await waitFor(() => expect(row('Notifications').className).toContain('ok'));
     click('OKAY');
     await waitFor(() => expect(onDone).toHaveBeenCalledWith({ guide: null }));
+    expect(warn).toHaveBeenCalledWith('[install] failed', expect.any(Error));
+    warn.mockRestore();
   });
 });

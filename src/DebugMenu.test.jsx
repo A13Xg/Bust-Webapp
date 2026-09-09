@@ -113,7 +113,7 @@ describe('DebugMenu', () => {
     expect(broadcastTestNotification).toHaveBeenCalledWith(expect.objectContaining({ userIds: ['u-0', 'u-1'] }));
   });
 
-  it('sends to everyone only when selected-user targeting is disabled', () => {
+  it('sends to everyone only when selected-user targeting is disabled', async () => {
     open();
     fireEvent.click(tab('NOTIFY'));
     fireEvent.click(screen.getByLabelText('Send to selected users'));
@@ -121,6 +121,7 @@ describe('DebugMenu', () => {
     fireEvent.click(screen.getByText('BROADCAST TO ALL USERS'));
     fireEvent.click(screen.getByText('SEND IT'));
     expect(broadcastTestNotification).toHaveBeenCalledWith(expect.objectContaining({ userIds: null }));
+    expect(await screen.findByText(/Delivered to 3 of 3 devices/)).toBeTruthy();
   });
 
   it('opens the lightbox from the tools tab and closes it again', () => {
