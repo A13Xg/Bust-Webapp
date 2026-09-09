@@ -246,10 +246,10 @@ const staticBackend = {
    * including the caller's own. Server-side an allowlist decides who may do
    * this; deliberately not run through the push_events ledger, because a
    * manual test send is something you may legitimately want to repeat. */
-  async broadcastTestNotification({ title, body } = {}) {
+  async broadcastTestNotification({ title, body, userIds } = {}) {
     if (!String(title || '').trim() && !String(body || '').trim()) return { ok: false, reason: 'empty_message' };
     const sb = await getSupa();
-    const { data, error } = await sb.functions.invoke('broadcast-test-notification', { body: { title, body } });
+    const { data, error } = await sb.functions.invoke('broadcast-test-notification', { body: { title, body, userIds } });
     if (error) {
       // The function returns 403 for a non-allowlisted caller; surface the
       // function's own message rather than the SDK's generic wrapper.

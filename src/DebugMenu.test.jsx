@@ -21,6 +21,7 @@ const debug = {
 const crew = [
   { id: 'u-2', username: 'Zoe' },
   { id: 'u-1', username: 'Ann' },
+  { id: 'u-0', username: 'AlexG' },
 ];
 
 const open = () =>
@@ -71,7 +72,7 @@ describe('DebugMenu', () => {
   it('does not broadcast until the confirmation is accepted', () => {
     open();
     fireEvent.click(tab('NOTIFY'));
-    fireEvent.click(screen.getByText('BROADCAST TO ALL USERS'));
+    fireEvent.click(screen.getByText('SEND TO SELECTED USERS'));
     expect(broadcastTestNotification).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByText('CANCEL'));
@@ -81,11 +82,15 @@ describe('DebugMenu', () => {
   it('broadcasts once the confirmation is accepted, and reports the result', async () => {
     open();
     fireEvent.click(tab('NOTIFY'));
-    fireEvent.click(screen.getByText('BROADCAST TO ALL USERS'));
+    fireEvent.click(screen.getByText('SEND TO SELECTED USERS'));
     fireEvent.click(screen.getByText('SEND IT'));
 
     expect(broadcastTestNotification).toHaveBeenCalledTimes(1);
-    expect(broadcastTestNotification.mock.calls[0][0].title).toBe('{{USER}} has busted');
+    expect(broadcastTestNotification).toHaveBeenCalledWith({
+      title: '{{USER}} has busted',
+      body: 'Sent by {{SENDER}} at {{TIME}} on {{DATE}}.',
+      userIds: ['u-0'],
+    });
     expect(await screen.findByText(/Delivered to 3 of 3 devices/)).toBeTruthy();
   });
 
@@ -93,9 +98,28 @@ describe('DebugMenu', () => {
     broadcastTestNotification.mockRejectedValue(new Error('This account is not allowed to broadcast.'));
     open();
     fireEvent.click(tab('NOTIFY'));
-    fireEvent.click(screen.getByText('BROADCAST TO ALL USERS'));
+    fireEvent.click(screen.getByText('SEND TO SELECTED USERS'));
     fireEvent.click(screen.getByText('SEND IT'));
     expect(await screen.findByText('This account is not allowed to broadcast.')).toBeTruthy();
+  });
+
+  it('sends to every checked recipient', () => {
+    open();
+    fireEvent.click(tab('NOTIFY'));
+    fireEvent.click(screen.getByLabelText('Ann'));
+    fireEvent.click(screen.getByText('SEND TO SELECTED USERS'));
+    fireEvent.click(screen.getByText('SEND IT'));
+    expect(broadcastTestNotification).toHaveBeenCalledWith(expect.objectContaining({ userIds: ['u-0', 'u-1'] }));
+  });
+
+  it('sends to everyone only when selected-user targeting is disabled', () => {
+    open();
+    fireEvent.click(tab('NOTIFY'));
+    fireEvent.click(screen.getByLabelText('Send to selected users'));
+    expect(screen.getByPlaceholderText('Filter usernames').disabled).toBe(true);
+    fireEvent.click(screen.getByText('BROADCAST TO ALL USERS'));
+    fireEvent.click(screen.getByText('SEND IT'));
+    expect(broadcastTestNotification).toHaveBeenCalledWith(expect.objectContaining({ userIds: null }));
   });
 
   it('opens the lightbox from the tools tab and closes it again', () => {
@@ -150,7 +174,7 @@ describe('DebugMenu', () => {
     open();
     fireEvent.click(tab('ACCOUNTS'));
     const options = [...document.querySelectorAll('select option')].map(o => o.textContent);
-    expect(options.slice(1)).toEqual(['Ann', 'Zoe']);
+    expect(options.slice(1)).toEqual(['AlexG', 'Ann', 'Zoe']);
 
     const button = screen.getByText('FORCE PASSWORD RESET');
     expect(button.disabled).toBe(true);

@@ -112,6 +112,9 @@ header.top-bar{top:0;left:0;right:0;padding:10px clamp(12px,3vw,26px) 10px;paddi
 .close{border-radius:14px;transition:transform .15s ease,filter .2s ease}
 .close:hover{filter:brightness(1.15)}
 .close:active{transform:scale(.92)}
+.analytics-overlay{inset:calc(66px + env(safe-area-inset-top,0px)) 0 0;width:auto;height:auto;background:rgba(10,10,11,.84)}
+header.top-bar{top:8px}
+.analytics-overlay{top:calc(82px + env(safe-area-inset-top,0px))}
 
 /* Tier medal backplates (public/badges/512) */
 .badge-medal{overflow:hidden}
@@ -207,7 +210,7 @@ header.top-bar{top:0;left:0;right:0;padding:10px clamp(12px,3vw,26px) 10px;paddi
 
 
 /* ===== Profile permission controls + note counter ===== */
-.perm-row{display:grid;gap:10px}
+.profile-page .perm-row{display:grid;gap:10px}.profile-page .perm-row>.perm-title{grid-column:1/-1}.profile-page .perm-row>div{grid-column:1/-1}
 .perm-title{color:var(--muted);font:900 11px Tahoma,sans-serif;letter-spacing:2px}
 .perm-row>div{display:flex;gap:10px;flex-wrap:wrap}
 .perm-row .mf-button.ghost{padding:11px 16px;font-size:12px;letter-spacing:1.5px}
@@ -349,6 +352,7 @@ img,svg,canvas{max-width:100%}
 .debug-panel{display:grid;gap:14px}
 .debug-note input{background:#09090b;border:1px solid var(--line);color:var(--ink);padding:11px;font:800 14px Tahoma,sans-serif;outline:0;text-transform:none;letter-spacing:0}
 .debug-note input:focus,.debug-note textarea:focus{border-color:var(--orange)}
+.recipient-picker{display:grid;gap:8px;padding:12px;border:1px solid var(--line);background:#09090b}.recipient-toggle{display:flex;align-items:center;gap:9px;color:var(--ink);font:900 12px Tahoma,sans-serif;letter-spacing:1px;text-transform:uppercase}.recipient-picker input[type="search"]{width:100%;background:#101014;border:1px solid var(--line);color:var(--ink);padding:10px;font:800 14px Tahoma,sans-serif}.recipient-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:7px;max-height:140px;overflow:auto}.recipient-list label{display:flex;align-items:center;gap:7px;color:var(--muted);font:800 13px Tahoma,sans-serif}.recipient-picker small{color:var(--muted);font-weight:700}.recipient-picker.disabled{opacity:.48}.recipient-picker.disabled input{cursor:not-allowed}
 .danger-hint{color:#ff8a80}
 .danger-hint strong{color:#ff6a55}
 

@@ -149,13 +149,18 @@ export async function sendToSubscriptions(
 }
 
 /** Every subscription belonging to anyone other than `excludeUserId`. */
-export async function subscriptionsForCrew(admin: SupabaseClient, excludeUserId: string | null) {
+export async function subscriptionsForCrew(
+  admin: SupabaseClient,
+  excludeUserId: string | null,
+  targetUserIds: string[] | null = null
+) {
   // Paginated: PostgREST caps an unranged select at 1000 rows, which would have
   // silently delivered to the first 1000 endpoints and reported that count as
   // if it were the whole crew.
   return (await fetchAllPages((from: number, to: number) => {
     let query = admin.from('push_subscriptions').select('id,user_id,endpoint,p256dh,auth').range(from, to);
     if (excludeUserId) query = query.neq('user_id', excludeUserId);
+    if (targetUserIds) query = targetUserIds.length ? query.in('user_id', targetUserIds) : query.in('user_id', ['']);
     return query;
   })) as PushSubscriptionRow[];
 }

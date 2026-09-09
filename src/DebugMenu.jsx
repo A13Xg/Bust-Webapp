@@ -89,12 +89,25 @@ function AchievementPicker({ onPick, onClose }) {
 
 /* ------------------------------- Notify tab ------------------------------- */
 
-function NotifyTab({ username }) {
+function NotifyTab({ username, users }) {
   const [title, setTitle] = useState('{{USER}} has busted');
   const [body, setBody] = useState('Sent by {{SENDER}} at {{TIME}} on {{DATE}}.');
   const [confirm, setConfirm] = useState(false);
   const [picker, setPicker] = useState(false);
+  const [singleUser, setSingleUser] = useState(true);
+  const [recipientQuery, setRecipientQuery] = useState('');
+  const [recipientIds, setRecipientIds] = useState(() => {
+    const currentUser = (users || []).find(user => user.username.toLowerCase() === username.toLowerCase());
+    return currentUser ? [currentUser.id] : [];
+  });
   const [state, setState] = useState({ status: 'idle', message: '' });
+
+  const roster = useMemo(
+    () => (users || []).slice().sort((a, b) => String(a.username).localeCompare(String(b.username))),
+    [users]
+  );
+  const matchingRecipients = roster.filter(user => user.username.toLowerCase().includes(recipientQuery.trim().toLowerCase()));
+  const selectedNames = roster.filter(user => recipientIds.includes(user.id)).map(user => user.username);
 
   /* Preview uses your own name for {{USER}}, which is only exact for your own
    * device — every other recipient sees their own. Labelled as such below. */
@@ -108,7 +121,7 @@ function NotifyTab({ username }) {
     setConfirm(false);
     setState({ status: 'sending', message: '' });
     try {
-      const result = await backend.broadcastTestNotification({ title, body });
+      const result = await backend.broadcastTestNotification({ title, body, userIds: singleUser ? recipientIds : null });
       if (!result?.ok) {
         setState({ status: 'error', message: result?.error || result?.reason || 'Broadcast failed' });
         return;
@@ -125,8 +138,8 @@ function NotifyTab({ username }) {
   return (
     <div className="debug-panel">
       <p className="showcase-hint danger-hint">
-        Unlike the rest of this menu, this sends a real push notification to <strong>every</strong> registered device,
-        including your own.
+        Unlike the rest of this menu, this sends a real push notification to{' '}
+        <strong>{singleUser ? 'the selected users' : 'every registered device'}</strong>, including your own when selected.
       </p>
 
       <label className="debug-note">
@@ -137,6 +150,34 @@ function NotifyTab({ username }) {
         Body
         <textarea value={body} maxLength={300} onChange={e => setBody(e.target.value)} />
       </label>
+
+      <div className={`recipient-picker${singleUser ? '' : ' disabled'}`}>
+        <label className="recipient-toggle">
+          <input type="checkbox" checked={singleUser} onChange={e => setSingleUser(e.target.checked)} />
+          Send to selected users
+        </label>
+        <input
+          type="search"
+          disabled={!singleUser}
+          value={recipientQuery}
+          placeholder="Filter usernames"
+          onChange={e => setRecipientQuery(e.target.value)}
+        />
+        <div className="recipient-list" aria-label="Recipients">
+          {matchingRecipients.map(user => (
+            <label key={user.id}>
+              <input
+                type="checkbox"
+                disabled={!singleUser}
+                checked={recipientIds.includes(user.id)}
+                onChange={e => setRecipientIds(ids => e.target.checked ? [...ids, user.id] : ids.filter(id => id !== user.id))}
+              />
+              {user.username}
+            </label>
+          ))}
+        </div>
+        {singleUser && <small>{selectedNames.length ? selectedNames.join(', ') : 'Select at least one user.'}</small>}
+      </div>
 
       <div className="token-sheet">
         <span className="mf-kicker">Insertable variables</span>
@@ -182,10 +223,10 @@ function NotifyTab({ username }) {
       <div className="picker-actions">
         <button
           className="mf-button danger"
-          disabled={blank || state.status === 'sending'}
+          disabled={blank || state.status === 'sending' || (singleUser && !recipientIds.length)}
           onClick={() => setConfirm(true)}
         >
-          {state.status === 'sending' ? 'SENDING…' : 'BROADCAST TO ALL USERS'}
+          {state.status === 'sending' ? 'SENDING…' : singleUser ? 'SEND TO SELECTED USERS' : 'BROADCAST TO ALL USERS'}
         </button>
       </div>
 
@@ -203,8 +244,8 @@ function NotifyTab({ username }) {
         createPortal(
           <div className="confirm-back" onClick={() => setConfirm(false)}>
             <div className="confirm-box mf-frame" onClick={e => e.stopPropagation()}>
-              <h2>Send to everyone?</h2>
-              <p>This pushes to every registered device on the crew. It cannot be recalled.</p>
+              <h2>{singleUser ? 'Send to selected users?' : 'Send to everyone?'}</h2>
+              <p>{singleUser ? `This pushes to ${selectedNames.join(', ')}. It cannot be recalled.` : 'This pushes to every registered device on the crew. It cannot be recalled.'}</p>
               <div className="broadcast-preview">
                 <strong>{preview.title || <i>(no title)</i>}</strong>
                 <p>{preview.body || <i>(no body)</i>}</p>
@@ -466,7 +507,7 @@ export function DebugMenu({ debug, username, users, logoSrc, onClose }) {
           </div>
         )}
 
-        {tab === 'notify' && <NotifyTab username={username} />}
+        {tab === 'notify' && <NotifyTab username={username} users={users} />}
         {tab === 'accounts' && <AccountsTab users={users} />}
         {tab === 'tools' && <ToolsTab logoSrc={logoSrc} />}
 

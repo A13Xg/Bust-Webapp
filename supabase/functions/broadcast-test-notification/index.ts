@@ -35,11 +35,19 @@ Deno.serve(async req => {
     const payload = await req.json().catch(() => ({}));
     const titleTemplate = String(payload?.title ?? '').slice(0, TITLE_MAX);
     const bodyTemplate = String(payload?.body ?? '').slice(0, BODY_MAX);
+    const hasUserIds = Object.prototype.hasOwnProperty.call(payload || {}, 'userIds');
+    let targetUserIds: string[] | null = null;
+    if (hasUserIds && payload?.userIds !== null) {
+      if (!Array.isArray(payload.userIds) || payload.userIds.some((id: unknown) => typeof id !== 'string' || !id.trim())) {
+        return json(400, { error: 'userIds must be an array of non-empty user IDs' });
+      }
+      targetUserIds = [...new Set((payload.userIds as string[]).map(id => id.trim()))];
+    }
     if (!titleTemplate.trim() && !bodyTemplate.trim()) {
       return json(400, { error: 'Expected a title or a body' });
     }
 
-    const subscriptions = await subscriptionsForCrew(admin, null); // null => everyone
+    const subscriptions = await subscriptionsForCrew(admin, null, targetUserIds); // null => everyone
     if (!subscriptions.length) return json(200, { ok: true, attempted: 0, delivered: 0, pruned: 0, crew: 0 });
 
     // One lookup for every recipient, so {{USER}} can name each of them.
