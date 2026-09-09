@@ -164,6 +164,34 @@ describe('PermissionsDialog', () => {
     }
   });
 
+  it('times out each notification attempt after three seconds', async () => {
+    vi.useFakeTimers();
+    try {
+      const enablePush = vi.fn(() => new Promise(() => {}));
+      render(
+        <PermissionsDialog
+          onDone={vi.fn()}
+          install={{ show: vi.fn() }}
+          enablePush={enablePush}
+          getNotificationPermission={() => 'default'}
+          requestLocationFn={async () => ({ outcome: OUTCOME.granted, coords: null })}
+        />
+      );
+      click('OKAY');
+      click('ACCEPT');
+
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(3000);
+        });
+      }
+      expect(enablePush).toHaveBeenCalledTimes(3);
+      expect(row('Notifications').className).toContain('bad');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   /* A denial cannot be re-prompted, so a RETRY button there would do nothing. */
   it('shows no retry for a denial, only the settings hint', async () => {
     setup({ location: OUTCOME.denied });
@@ -226,14 +254,15 @@ describe('PermissionsDialog', () => {
     expect(sessionStorage.getItem(SESSION_SEEN_KEY)).toBe('1');
   });
 
-  it('does not persist an opt-out that was never ticked', async () => {
-    setup();
+  it('does not suppress future prompts without an explicit opt-out', async () => {
+    const { requestLocationFn, enablePush } = setup();
     click('OKAY');
     click('ACCEPT');
     await waitFor(() => expect(row('Notifications').className).toContain('ok'));
     expect(localStorage.getItem(DONT_ASK_KEY)).toBeNull();
-    // Seen-this-session still set, so it does not re-open on the next render.
-    expect(sessionStorage.getItem(SESSION_SEEN_KEY)).toBe('1');
+    expect(sessionStorage.getItem(SESSION_SEEN_KEY)).toBeNull();
+    expect(requestLocationFn).toHaveBeenCalled();
+    expect(enablePush).toHaveBeenCalled();
   });
 
   /* The documented full opt-out: uncheck both permissions, tick don't-ask, accept. */

@@ -114,14 +114,13 @@ describe('permission preferences', () => {
 });
 
 describe('opt-out flow as the dialog uses it', () => {
-  it('only suppresses future sessions when the box was ticked', () => {
+  it('only suppresses future launches when the box was ticked', () => {
     const local = store();
     const session = store();
 
     // Accepted without ticking "don't ask again".
     setOptedOut(false, local);
-    markSeenThisSession(session);
-    expect(shouldShowPermissionsDialog({ local, session })).toBe(false); // this session
+    expect(shouldShowPermissionsDialog({ local, session })).toBe(true);
     expect(shouldShowPermissionsDialog({ local, session: store() })).toBe(true); // next session
 
     setOptedOut(true, local);

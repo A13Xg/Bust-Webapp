@@ -39,6 +39,7 @@ const WHY_COPY =
   'Location and notifications are what make those two things work.';
 const MAX_PERMISSION_ATTEMPTS = 3;
 const PERMISSION_ATTEMPT_TIMEOUT_MS = 6000;
+const PUSH_ATTEMPT_TIMEOUT_MS = PERMISSION_ATTEMPT_TIMEOUT_MS / 2;
 const OKAY_UNLOCK_DELAY_MS = 3000;
 
 async function completeWithin(task, timeoutMs = PERMISSION_ATTEMPT_TIMEOUT_MS) {
@@ -115,7 +116,7 @@ export function PermissionsDialog({
     let outcome = OUTCOME.timeout;
     for (let attempt = 0; attempt < MAX_PERMISSION_ATTEMPTS; attempt += 1) {
       try {
-        const result = await completeWithin(enablePush);
+        const result = await completeWithin(enablePush, PUSH_ATTEMPT_TIMEOUT_MS);
         outcome =
           result == null
             ? OUTCOME.timeout
@@ -135,8 +136,8 @@ export function PermissionsDialog({
   /* Sequential on purpose: two native prompts at once and the browser stacks
    * them, or silently drops the second. */
   async function accept() {
-    markSeenThisSession();
     setOptedOut(dontAsk);
+    if (dontAsk) markSeenThisSession();
     wantInstall.current = choices.install;
 
     if (!choices.location && !choices.notifications) {
