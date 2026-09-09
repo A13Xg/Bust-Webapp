@@ -23,6 +23,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export const FIRST_REMINDER_DELAY_MS = 5 * DAY_MS;
 export const REMINDER_WINDOW_MS = 2 * DAY_MS;
 export const MIN_REMINDER_INTERVAL_MS = 5 * DAY_MS;
+export const REMINDER_CALL_TO_ACTION = 'RECORD YOUR BUSTS!';
 
 export { INACTIVITY_MESSAGE_CATALOG };
 
@@ -173,12 +174,13 @@ function chooseWeightedMessageIndex(random = Math.random) {
  * @returns {{ index: number, text: string }}
  */
 export function pickInactivityReminderMessage({ random = Math.random, lastMessageIndex = null } = {}) {
-  if (!INACTIVITY_MESSAGE_CATALOG.length) return { index: -1, text: 'Reminder: log a bust.' };
+  if (!INACTIVITY_MESSAGE_CATALOG.length) return { index: -1, text: `Reminder: log a bust. ${REMINDER_CALL_TO_ACTION}` };
   let index = chooseWeightedMessageIndex(random);
   if (INACTIVITY_MESSAGE_CATALOG.length > 1 && Number.isInteger(lastMessageIndex) && index === lastMessageIndex) {
     index = (index + 1 + Math.floor(random() * (INACTIVITY_MESSAGE_CATALOG.length - 1))) % INACTIVITY_MESSAGE_CATALOG.length;
   }
-  return { index, text: INACTIVITY_MESSAGE_CATALOG[index]?.text || 'Reminder: log a bust.' };
+  const text = INACTIVITY_MESSAGE_CATALOG[index]?.text || 'Reminder: log a bust.';
+  return { index, text: `${text} ${REMINDER_CALL_TO_ACTION}` };
 }
 
 export function buildInactivityReminderMessage(random = Math.random, lastMessageIndex = null) {

@@ -4,6 +4,7 @@ import {
   FIRST_REMINDER_DELAY_MS,
   MIN_REMINDER_INTERVAL_MS,
   REMINDER_WINDOW_MS,
+  REMINDER_CALL_TO_ACTION,
   INACTIVITY_MESSAGE_CATALOG,
   inactivityReminderStorageKey,
   isInactivityReminderDue,
@@ -121,6 +122,7 @@ describe('inactivity reminder storage', () => {
     expect(selected.index).not.toBe(previousIndex);
     expect(typeof selected.text).toBe('string');
     expect(selected.text.length).toBeGreaterThan(0);
+    expect(selected.text.endsWith(REMINDER_CALL_TO_ACTION)).toBe(true);
   });
   it('staggers reminders across a 5-7 day window measured from the last bust', () => {
     const DAY = 24 * 60 * 60 * 1000;
