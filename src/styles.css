@@ -108,13 +108,11 @@ header.top-bar{top:0;left:0;right:0;padding:10px clamp(12px,3vw,26px) 10px;paddi
 :focus-visible{outline:2px solid var(--orange);outline-offset:2px}
 
 /* Overlay refinement */
-.overlay{backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);padding-bottom:calc(34px + env(safe-area-inset-bottom,0px))}
+.overlay{inset:calc(74px + env(safe-area-inset-top,0px)) 0 0;width:auto;height:auto;background:rgba(10,10,11,.84);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);padding-bottom:calc(34px + env(safe-area-inset-bottom,0px))}
 .close{border-radius:14px;transition:transform .15s ease,filter .2s ease}
 .close:hover{filter:brightness(1.15)}
 .close:active{transform:scale(.92)}
-.analytics-overlay{inset:calc(66px + env(safe-area-inset-top,0px)) 0 0;width:auto;height:auto;background:rgba(10,10,11,.84)}
 header.top-bar{top:8px}
-.analytics-overlay{top:calc(82px + env(safe-area-inset-top,0px))}
 
 /* Tier medal backplates (public/badges/512) */
 .badge-medal{overflow:hidden}

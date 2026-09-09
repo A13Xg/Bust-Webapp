@@ -113,7 +113,7 @@ Deno.serve(async req => {
         kind: 'test',
         data: { kind: 'test' },
       });
-      test = { delivered: result.delivered, attempted: result.attempted, failures: result.failures };
+      test = { delivered: result.delivered, attempted: result.attempted, pruned: result.pruned, failures: result.failures };
     }
 
     return json(200, { ok: true, endpoint, test });
