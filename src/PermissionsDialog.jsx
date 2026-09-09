@@ -21,7 +21,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion } from 'framer-motion';
-import { Bell, MapPin, RotateCw, Smartphone, X } from 'lucide-react';
+import { Bell, Lock, MapPin, RotateCw, Smartphone, X } from 'lucide-react';
 
 import { markSeenThisSession, permissionStates, setOptedOut } from './permissionPrefs.js';
 import {
@@ -222,22 +222,30 @@ export function PermissionsDialog({
         {phase === 'choose' && (
           <motion.div layout className="perm-phase">
             <label className={`perm-check${grantedPermissions.notifications ? ' granted-locked' : ''}`}>
-              <input
-                type="checkbox"
-                checked={choices.notifications}
-                disabled={grantedPermissions.notifications}
-                onChange={() => toggle('notifications')}
-              />
+              <span className="perm-check-control">
+                <input
+                  type="checkbox"
+                  checked={choices.notifications}
+                  disabled={grantedPermissions.notifications}
+                  onChange={() => toggle('notifications')}
+                />
+                {grantedPermissions.notifications && (
+                  <Lock className="perm-check-lock" aria-label="Notifications enabled" />
+                )}
+              </span>
               <Bell />
               <span>Allow Notifications</span>
             </label>
             <label className={`perm-check${grantedPermissions.location ? ' granted-locked' : ''}`}>
-              <input
-                type="checkbox"
-                checked={choices.location}
-                disabled={grantedPermissions.location}
-                onChange={() => toggle('location')}
-              />
+              <span className="perm-check-control">
+                <input
+                  type="checkbox"
+                  checked={choices.location}
+                  disabled={grantedPermissions.location}
+                  onChange={() => toggle('location')}
+                />
+                {grantedPermissions.location && <Lock className="perm-check-lock" aria-label="Location enabled" />}
+              </span>
               <MapPin />
               <span>Allow Location Access</span>
             </label>

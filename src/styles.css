@@ -443,8 +443,11 @@ img,svg,canvas{max-width:100%}
 .perm-check:hover{border-color:rgba(255,94,0,.4)}
 .perm-check svg{width:20px;height:20px;color:var(--orange)}
 .perm-check input{accent-color:var(--orange);width:19px;height:19px;flex:none}
-.perm-check.granted-locked{color:var(--muted);opacity:.65}
-.perm-check.granted-locked input{accent-color:#52b86a}
+.perm-check-control{position:relative;display:grid;place-items:center;width:19px;height:19px}
+.perm-check-control input{margin:0}
+.perm-check.granted-locked{color:var(--muted)}
+.perm-check.granted-locked input{accent-color:#52b86a;opacity:1}
+.perm-check-lock{position:absolute;right:-7px;bottom:-5px;width:12px!important;height:12px!important;padding:1px;color:#52b86a!important;background:#09090b;pointer-events:none}
 .perm-check-hero{padding:17px 16px;border-color:rgba(255,94,0,.5);background:rgba(255,94,0,.08);font-size:17px}
 .perm-check-hero svg{width:25px;height:25px}
 .perm-check-hero input{width:22px;height:22px}
