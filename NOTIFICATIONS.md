@@ -129,6 +129,37 @@ a payload object. Tokens are documented in `describeTokens()` and shown in the
 tab itself. An unrecognised token renders literally rather than blanking, so a
 typo is visible in the preview instead of shipping an empty sentence.
 
+## How permission gets asked for
+
+Two dialogs, with different jobs. Both live behind `src/permissionRequests.js`,
+which classifies what happened.
+
+**First login** — `PermissionsDialog`, three phases in one stretching window:
+why → what to enable → what happened. Location is requested first, then
+notifications, strictly one after the other; fire both at once and the browser
+stacks or silently drops the second. Install is offered only after that panel is
+dismissed, never alongside a native prompt, which also means `prompt()` gets a
+fresh user gesture from the final OKAY — it would not survive two awaited
+permission dialogs.
+
+`Don't ask me again` lives in `localStorage` and nowhere else. That is not
+laziness: localStorage is per origin per device, which is exactly the requested
+behaviour (same device elsewhere → stays quiet; new device → asks again) with no
+detection code. Storing it against the account would break it.
+
+**Bust time** — the older `PermissionGate`, now firing during the charge phase
+and only on a *confirmed* denial. It ignores the opt-out on purpose, and offers
+no install step. `navigator.permissions.query` has no geolocation support on iOS
+Safari, so there the location half can never be confirmed and never fires; an
+unknown state is not a denial.
+
+**Retry is offered only where asking again can change the answer.** A browser
+prompts only while the state is undecided, so a denial is final until the user
+edits site settings — a RETRY there would visibly do nothing. A dismissed prompt
+(`default`) and a geolocation timeout or position-unavailable are all
+recoverable, and those get the button. Everything else gets a red X and a
+pointer at site settings.
+
 ## Deploying
 
 ```bash

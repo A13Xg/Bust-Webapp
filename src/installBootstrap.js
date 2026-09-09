@@ -7,10 +7,20 @@ import {
   shouldShowInstallPrompt,
 } from './pwaInstall.js';
 
-const SHOW_DELAY_MS = 1400;
+/*
+ * Triggered by the Permissions dialog, never on a timer. The old 1.4s
+ * auto-schedule is gone: install must not compete with the native permission
+ * prompts for the user's attention, so the dialog calls window.bustInstall.show()
+ * only after location and notifications have been settled.
+ */
+const asset = path => (import.meta.env?.BASE_URL || '/') + String(path).replace(/^\//, '');
+const GUIDE_IMAGE = { ios: 'assets/images/iOS_webappGuide.png', android: 'assets/images/Android_webappGuide.png' };
+
+function guideFor(platform) {
+  return asset(platform.ios ? GUIDE_IMAGE.ios : GUIDE_IMAGE.android);
+}
 let deferredInstallPrompt = null;
 let rendered = false;
-let showTimer = null;
 let escapeHandler = null;
 
 function escapeHtml(value) {
@@ -49,6 +59,7 @@ function injectStyles() {
     #bust-install-actions button{min-height:46px;border-radius:13px;padding:0 16px;font:700 .95rem/1 system-ui;border:1px solid rgba(255,255,255,.14);cursor:pointer}
     #bust-install-primary{flex:1;background:#ff6a00;color:#090909;border-color:#ff6a00!important}
     #bust-install-later{background:rgba(255,255,255,.06);color:#f5f1ea}
+    #bust-install-guide{display:block;width:100%;max-height:44vh;object-fit:contain;margin:0 0 14px;border-radius:12px;background:rgba(255,255,255,.03)}
     #bust-install-steps{display:none;margin:12px 0 0;padding:13px 14px;border-radius:14px;background:rgba(255,255,255,.055);color:#eee9e1;font-size:.93rem;line-height:1.5}
     #bust-install-steps[data-visible="true"]{display:block}
     #bust-install-steps ol{margin:0;padding-left:20px}
@@ -98,10 +109,12 @@ async function handlePrimaryAction(mode, status, steps) {
   }
 }
 
-function renderPrompt() {
+function renderPrompt({ force = false } = {}) {
   if (rendered || isStandalone()) return;
   const platform = detectInstallPlatform();
-  if (!shouldShowInstallPrompt({ platform })) return;
+  // A manual open is an explicit request, so it ignores the 7-day snooze that
+  // governs the unsolicited prompt.
+  if (!force && !shouldShowInstallPrompt({ platform })) return;
 
   const copy = installCopy(platform, Boolean(deferredInstallPrompt));
   injectStyles();
@@ -121,6 +134,7 @@ function renderPrompt() {
           <button id="bust-install-primary" type="button">${escapeHtml(copy.action)}</button>
           <button id="bust-install-later" type="button">Not now</button>
         </div>
+        <img id="bust-install-guide" src="${escapeHtml(guideFor(platform))}" alt="" aria-hidden="true"/>
         <div id="bust-install-steps">${instructionMarkup(copy.mode)}</div>
         <div id="bust-install-status" aria-live="polite"></div>
       </div>
@@ -149,18 +163,12 @@ function renderPrompt() {
   overlay.querySelector('#bust-install-primary')?.focus({ preventScroll: true });
 }
 
-function schedulePrompt() {
-  if (showTimer || rendered) return;
-  showTimer = setTimeout(() => {
-    showTimer = null;
-    renderPrompt();
-  }, SHOW_DELAY_MS);
-}
-
 window.addEventListener('beforeinstallprompt', event => {
+  // Captured early, used later. This module is a separate <script type="module">
+  // precisely so the event is caught before React mounts; Chromium fires it once
+  // and never replays it.
   event.preventDefault();
   deferredInstallPrompt = event;
-  schedulePrompt();
 });
 
 window.addEventListener('appinstalled', () => {
@@ -169,15 +177,59 @@ window.addEventListener('appinstalled', () => {
   removePrompt();
 });
 
-function start() {
-  if (isStandalone()) return;
+/*
+ * Public API for the Permissions dialog.
+ *
+ * `hooks` is initialised from the platform, per spec: the manual-instructions
+ * hook is a placeholder that starts false everywhere, and the iOS hook starts
+ * true only on iOS. iOS has no programmatic install path at all — Apple has
+ * never implemented beforeinstallprompt — so there the guide is the whole
+ * feature, not a fallback.
+ */
+const bootPlatform = detectInstallPlatform();
+
+export const installHooks = {
+  manualInstructions: false,
+  iosInstructions: Boolean(bootPlatform.ios),
+};
+
+/**
+ * Offer installation. On Chromium the native prompt fires first and the guide
+ * card only appears if that is unavailable or declined; on iOS it goes straight
+ * to the guide. Must be called from a user gesture for the native path.
+ */
+async function showInstall() {
+  if (isStandalone()) return { outcome: 'already-installed' };
   const platform = detectInstallPlatform();
-  if (!platform.mobile) return;
-  const activate = () => schedulePrompt();
-  window.addEventListener('pointerdown', activate, { once: true, passive: true });
-  window.addEventListener('keydown', activate, { once: true });
-  setTimeout(schedulePrompt, 4500);
+
+  if (!platform.ios && deferredInstallPrompt) {
+    const promptEvent = deferredInstallPrompt;
+    deferredInstallPrompt = null;
+    try {
+      await promptEvent.prompt();
+      const choice = await promptEvent.userChoice;
+      if (choice?.outcome === 'accepted') {
+        clearInstallPromptDismissal();
+        return { outcome: 'installed' };
+      }
+    } catch {
+      // Fall through to the guide below.
+    }
+  }
+
+  if (platform.ios) installHooks.iosInstructions = true;
+  else installHooks.manualInstructions = true;
+
+  renderPrompt({ force: true });
+  return { outcome: 'instructions' };
 }
 
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
-else start();
+const api = {
+  hooks: installHooks,
+  canNativeInstall: () => Boolean(deferredInstallPrompt),
+  isInstalled: () => isStandalone(),
+  show: showInstall,
+};
+
+window.bustInstall = api;
+export default api;

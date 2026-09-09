@@ -5,6 +5,7 @@ const broadcastTestNotification = vi.fn();
 vi.mock('./backend.js', () => ({ backend: { broadcastTestNotification } }));
 
 const { DebugMenu } = await import('./DebugMenu.jsx');
+const { achievements } = await import('./rules.js');
 
 const debug = {
   xp: 0,
@@ -99,5 +100,40 @@ describe('DebugMenu', () => {
 
     fireEvent.click(screen.getByLabelText('Close image'));
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('browses achievements from the info button and inserts the picked id', async () => {
+    open();
+    fireEvent.click(tab('NOTIFY'));
+    fireEvent.click(screen.getByLabelText('Browse every achievement'));
+
+    // Every achievement is listed, each with its tier on the row.
+    const rows = document.querySelectorAll('.ach-picker-row');
+    expect(rows.length).toBe(achievements.length);
+    expect(rows[0].className).toMatch(/tier-(bronze|silver|gold|platinum|mythic)/);
+
+    fireEvent.change(screen.getByPlaceholderText(/Filter by name/), { target: { value: 'hat trick' } });
+    const filtered = document.querySelectorAll('.ach-picker-row');
+    expect(filtered.length).toBe(1);
+
+    fireEvent.click(filtered[0]);
+    expect(document.querySelector('.ach-picker')).toBeNull();
+    expect(screen.getByLabelText(/^Body$/i).value).toContain('{{ACHIEVEMENT:hat_trick}}');
+  });
+
+  it('filters on id and tier too, and says so when nothing matches', () => {
+    open();
+    fireEvent.click(tab('NOTIFY'));
+    fireEvent.click(screen.getByLabelText('Browse every achievement'));
+    const filter = screen.getByPlaceholderText(/Filter by name/);
+
+    fireEvent.change(filter, { target: { value: 'mythic' } });
+    expect(document.querySelectorAll('.ach-picker-row').length).toBe(
+      achievements.filter(a => a.tier === 'mythic').length
+    );
+
+    fireEvent.change(filter, { target: { value: 'zzzz-no-such-thing' } });
+    expect(document.querySelectorAll('.ach-picker-row').length).toBe(0);
+    expect(screen.getByText(/Nothing matches/)).toBeTruthy();
   });
 });

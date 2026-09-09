@@ -35,8 +35,11 @@ import {
   reconcileInactivityReminderState,
   saveInactivityReminderState,
 } from './inactivityReminder.js';
+import { BadgeIcon, MIcon, matMap, setMsymStatus } from './badgeIcons.jsx';
 import { useAchievementQueue } from './useAchievementQueue.js';
 import { DebugMenu } from './DebugMenu.jsx';
+import { PermissionsDialog } from './PermissionsDialog.jsx';
+import { shouldShowPermissionsDialog } from './permissionPrefs.js';
 import { clampMenuToViewport } from './contextMenu.js';
 import { useLongPress } from './useLongPress.js';
 
@@ -90,15 +93,6 @@ async function fetchTideFt(lat,long){
 function pressureBandValue(p){ p=finiteNumber(p); if(p==null) return null; if(p<990) return 0; if(p<1005) return 1; if(p<1015) return 2; if(p<1025) return 3; return 4; }
 function tempBandValue(t){ t=finiteNumber(t); if(t==null) return null; if(t<32) return 0; if(t<52) return 1; if(t<72) return 2; if(t<92) return 3; return 4; }
 const tierUrl = t => ['bronze','silver','gold','platinum','mythic'].includes(t) ? asset(`badges/512/${t}.png`) : null;
-const matMap={Activity:'monitoring',AlarmClock:'alarm',Clock3:'schedule',Sparkles:'auto_awesome',Repeat2:'repeat',Moon:'dark_mode',Sun:'light_mode',Sunrise:'wb_twilight',Flame:'local_fire_department',Snowflake:'ac_unit',Gauge:'speed',NotebookPen:'edit_note',BadgeCheck:'verified',CalendarDays:'calendar_month',MapPinned:'location_on',Crown:'crown',Medal:'military_tech',Trophy:'trophy',Shield:'shield'};
-const iconFallback={monitoring:['Pulse Oracle','⌁'],alarm:['Dawn Bell','⏰'],schedule:['Clock Sigil','⏱'],auto_awesome:['Stardust','✦'],repeat:['Echo Loop','↻'],dark_mode:['Moonwatch','☾'],light_mode:['Sunflare','☀'],wb_twilight:['First Light','◐'],local_fire_department:['Phoenix Flame','🔥'],ac_unit:['Frost Rune','❄'],speed:['Velocity Mark','⌁'],edit_note:['Field Quill','✎'],verified:['Seal of Proof','✓'],calendar_month:['Calendar Seal','▣'],location_on:['Map Pin','⌖'],crown:['Crown Mark','♛'],military_tech:['Medal Star','★'],trophy:['Victory Cup','🏆'],shield:['Ward Shield','⬟']};
-const prettyIcon=n=>String(n||'shield').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
-// Shared glyph-font status: MIcon renders exactly ONE span (real glyph or fallback),
-// never both, so the two can't ever visually stack while font-load state settles.
-let msymStatus='pending'; const msymListeners=new Set();
-function setMsymStatus(s){ msymStatus=s; msymListeners.forEach(fn=>fn(s)); }
-function useMsymStatus(){ const [status,setStatus]=useState(msymStatus); useEffect(()=>{ msymListeners.add(setStatus); return ()=>msymListeners.delete(setStatus); },[]); return status; }
-function MIcon({name,className=''}){ const status=useMsymStatus(); const key=name||'shield'; const [label,symbol]=iconFallback[key]||[prettyIcon(key),'◆']; return <span className={`icon-stack ${className}`} title={label} aria-label={label}>{status==='ready'&&<span className="msym material-symbols-outlined" aria-hidden="true">{key}</span>}{status==='failed'&&<span className="icon-fallback" aria-hidden="true">{symbol}</span>}</span> }
 function AchievementCard({item,unlocked,onClick}){ return <div className={`ach-card mf-frame ${unlocked?'won':'locked'} tier-${item.tier}${onClick?' clickable':''}`} onClick={onClick} role={onClick?'button':undefined} tabIndex={onClick?0:undefined} onKeyDown={e=>{if(onClick&&(e.key==='Enter'||e.key===' ')){e.preventDefault();onClick();}}}>
   <MIcon name={item.micon||matMap[item.icon]||'shield'} className="ach-icon"/>
   <h3>{item.name}</h3>
@@ -195,25 +189,31 @@ function DeleteAccountModal({onClose,onDeleted}){
 /** Shown immediately after login when location or notifications aren't granted.
  *  Location permission is requested on open; notification permission requires an
  *  explicit button click. OKAY dismisses locally without reloading. */
-function PermissionGate(){
+/*
+ * Bust-time re-ask. Fires during the charge ("edging") phase, and ONLY when a
+ * denial can actually be confirmed — an unknown state is not a denial, so on
+ * iOS, where permissions.query has no geolocation support, the location half
+ * simply never triggers. Deliberately ignores "don't ask me again", which
+ * governs the first-login dialog only, and deliberately offers no install step.
+ */
+function PermissionGate({active=false}){
   const [show,setShow]=useState(false);
   const [notif,setNotif]=useState(getNotificationPermission());
   const [geo,setGeo]=useState('checking');
   const [busy,setBusy]=useState(false);
   // Non-null whenever push could not be armed; surfaced verbatim to the user.
   const [pushNote,setPushNote]=useState(()=>{ const blocked=pushBlockedReason(detectPushPlatform()); return blocked?PUSH_REASON_MESSAGE[blocked]:null; });
-  useEffect(()=>{ let alive=true; (async()=>{
+  useEffect(()=>{ if(!active) return undefined; let alive=true; (async()=>{
       let g='prompt';
       try{ const r=await navigator.permissions.query({name:'geolocation'}); g=r.state; r.onchange=()=>{ if(alive) setGeo(r.state); }; }catch{}
   const n=getNotificationPermission();
       if(!alive) return;
       setGeo(g);
       setNotif(n);
-      // sessionStorage flag guarantees the gate appears at most once per session.
-      // OKAY sets that flag and closes locally without forcing a page reload.
-      const alreadyPrompted=sessionStorage.getItem('bust_perm_prompted')==='1';
-      if(!alreadyPrompted && (g!=='granted' || (n!=='granted'&&n!=='unsupported'))) setShow(true);
-    })(); return()=>{ alive=false; }; },[]);
+      // Only a CONFIRMED denial opens this. 'prompt'/'unknown' means the first-login
+      // dialog either has not run or was dismissed, which is not this gate's job.
+      if(g==='denied'||n==='denied') setShow(true);
+    })(); return()=>{ alive=false; }; },[active]);
   useEffect(()=>{ if(!show) return;
     // Location: request automatically (low-friction, needed for bust context).
     navigator.geolocation?.getCurrentPosition(
@@ -233,7 +233,7 @@ function PermissionGate(){
   if(!show) return null;
   const lbl=v=>({granted:'ENABLED',denied:'BLOCKED',default:'WAITING…',prompt:'NOT YET',checking:'…',unsupported:'N/A'}[v]||v);
   return createPortal(<div className="ach-detail-back"><div className="picker-box confirm-box mf-frame">
-    <h2>Enable Permissions</h2>
+    <button className="detail-close" onClick={()=>closePermissionPrompt(sessionStorage,()=>setShow(false))} aria-label="Close permissions"><X/></button><h2>Enable Permissions</h2>
     <p className="showcase-hint">BUST stamps each event with your location + weather and pings you when the crew fires.</p>
     <p className="showcase-hint" style={{marginTop:0}}>Mobile push works best after installing this app to your home screen.</p>
     <div className="perm-status">
@@ -254,7 +254,7 @@ function Login({ onAuthed }) {
 
 function App(){ const [user,setUser]=useState(null); const [boot,setBoot]=useState(true); useEffect(()=>{backend.me().then(setUser).catch(()=>{}).finally(()=>setBoot(false))},[]); useEffect(()=>{ if(!supportsWebPush()) return; void registerPushServiceWorker(navigator, asset('sw.js')); },[]); if(boot) return <div className="boot">UNPACKING BUST BAY…</div>; return user?<Dashboard user={user} setUser={setUser}/>:<Login onAuthed={setUser}/> }
 
-function Dashboard({user,setUser}){ const [busts,setBusts]=useState([]),[users,setUsers]=useState([]),[unlocks,setUnlocks]=useState([]); const [debugBusts,setDebugBusts]=useState([]),[debugUnlocks,setDebugUnlocks]=useState([]),[debugXp,setDebugXp]=useState(0); const [overlay,setOverlay]=useState(null),[selected,setSelected]=useState(null),[phase,setPhase]=useState('idle'),[pendingCtx,setPendingCtx]=useState(null),[toasts,setToasts]=useState([]),[unread,setUnread]=useState(0),[muted,setMuted]=useState(sfx.isMuted()); const bustRef=useRef([]); bustRef.current=busts; const unlocksRef=useRef([]); unlocksRef.current=unlocks; const usersRef=useRef([]); usersRef.current=users; const chargeSfx=useRef(null); const seenRealtimeEvents=useRef(new Set()); const [,tick]=useState(0);
+function Dashboard({user,setUser}){ const [showPerms,setShowPerms]=useState(()=>shouldShowPermissionsDialog()); const [busts,setBusts]=useState([]),[users,setUsers]=useState([]),[unlocks,setUnlocks]=useState([]); const [debugBusts,setDebugBusts]=useState([]),[debugUnlocks,setDebugUnlocks]=useState([]),[debugXp,setDebugXp]=useState(0); const [overlay,setOverlay]=useState(null),[selected,setSelected]=useState(null),[phase,setPhase]=useState('idle'),[pendingCtx,setPendingCtx]=useState(null),[toasts,setToasts]=useState([]),[unread,setUnread]=useState(0),[muted,setMuted]=useState(sfx.isMuted()); const bustRef=useRef([]); bustRef.current=busts; const unlocksRef=useRef([]); unlocksRef.current=unlocks; const usersRef=useRef([]); usersRef.current=users; const chargeSfx=useRef(null); const seenRealtimeEvents=useRef(new Set()); const [,tick]=useState(0);
   const { current: badgeToast, enqueue: enqueueBadge, dismiss: dismissBadge } = useAchievementQueue(5200);
   const remaining = twoHoursRemainingMs(user.last_bust_timestamp); const locked = remaining > 0 && phase==='idle';
   /* Mirror the unread count onto the installed app icon. Supported on Android
@@ -480,7 +480,7 @@ function Dashboard({user,setUser}){ const [busts,setBusts]=useState([]),[users,s
   const analytics=useMemo(()=>buildAnalytics(effectiveBusts,users,user,effectiveUnlocks,debugXp),[effectiveBusts,users,user,effectiveUnlocks,debugXp]);
   const myLevel=useMemo(()=>debugXp?levelForXp(debugXp):derivePersonalStats(user.id,effectiveBusts,effectiveUnlocks).level,[user.id,effectiveBusts,effectiveUnlocks,debugXp]);
   const mythicIds=useMemo(()=>new Set(analytics.leaderboard.filter(u=>u.lvl.nextAt==null).map(u=>u.id)),[analytics.leaderboard]);
-  return <main className={`dash ${locked?'cooldown-mode':''} ${phase==='charge'?'charging':''} ${phase==='explode'?'detonating':''}`}><GridBg/><PermissionGate/>{locked&&<CooldownGoop/>}<header className="top-bar"><button className="profile-chip" onClick={()=>setOverlay('profile')}><img src={avatar(user.avatar_seed)}/><span className={myLevel.title==='MasterBaiter'?'rank-mythic':''}>{user.username}</span></button><img className="brand-mark" src={asset('bust-logo.png')} alt="" aria-hidden="true"/><div className="top-actions"><button className="icon-btn" title={muted?'Unmute SFX':'Mute SFX'} onClick={()=>setMuted(sfx.toggleMuted())}>{muted?<VolumeX/>:<Volume2/>}</button><button className="icon-btn" onClick={()=>{setOverlay('alerts');setUnread(0)}}><Bell/>{unread>0&&<b>{unread}</b>}</button><button className="icon-btn trophy-action" onClick={()=>setOverlay('trophy')}><Trophy/><small>{new Set(effectiveUnlocks.filter(a=>a.user_id===user.id).map(a=>a.achievement_type)).size}</small></button></div></header><section className="button-stage">{locked?<CooldownScene/>:<BustButton phase={phase} onClick={startBust}/>}</section><button className="drawer-handle" onClick={()=>setOverlay('analytics')}><ChevronUp/> ANALYTICS BAY</button><Toasts toasts={toasts} setToasts={setToasts} onOpen={setSelected} mythicIds={mythicIds}/><AnimatePresence>{badgeToast&&<BadgeToast key="badge-toast" badge={badgeToast}/>} {overlay&&<Overlay key={`overlay-${overlay}`} title={overlayTitle(overlay)} onClose={()=>setOverlay(null)} showScrollTop={['profile','analytics','trophy'].includes(overlay)}>{overlay==='profile'&&<Profile user={user} setUser={setUser} busts={effectiveBusts} unlocks={effectiveUnlocks} users={users} onOpen={setSelected} mythicIds={mythicIds} debug={{xp:debugXp,setXp:setDebugXp,onBust:addDebugBust,onUnlock:addDebugUnlock,onClear:clearDebug,onResetCooldown:resetDebugCooldown,counts:{busts:debugBusts.length,unlocks:debugUnlocks.length}}}/>} {overlay==='alerts'&&<Alerts busts={effectiveBusts} onOpen={setSelected} mythicIds={mythicIds}/>} {overlay==='analytics'&&<Analytics data={analytics} busts={effectiveBusts} onOpen={setSelected} mythicIds={mythicIds}/>} {overlay==='trophy'&&<TrophyCabinet unlocks={effectiveUnlocks} busts={effectiveBusts} user={user}/>}</Overlay>} {selected&&<Detail key={`detail-${selected.id}`} bust={selected} all={effectiveBusts} currentUserId={user.id} onSaveNote={saveBustNote} onClose={()=>setSelected(null)} mythicIds={mythicIds}/>}</AnimatePresence>{phase==='explode'&&<Explosion/>}</main> }
+  return <main className={`dash ${locked?'cooldown-mode':''} ${phase==='charge'?'charging':''} ${phase==='explode'?'detonating':''}`}><GridBg/><PermissionGate active={phase==='charge'}/>{showPerms&&<PermissionsDialog onDone={()=>setShowPerms(false)} enablePush={enablePushNotifications} getNotificationPermission={getNotificationPermission}/>}{locked&&<CooldownGoop/>}<header className="top-bar"><button className="profile-chip" onClick={()=>setOverlay('profile')}><img src={avatar(user.avatar_seed)}/><span className={myLevel.title==='MasterBaiter'?'rank-mythic':''}>{user.username}</span></button><img className="brand-mark" src={asset('bust-logo.png')} alt="" aria-hidden="true"/><div className="top-actions"><button className="icon-btn" title={muted?'Unmute SFX':'Mute SFX'} onClick={()=>setMuted(sfx.toggleMuted())}>{muted?<VolumeX/>:<Volume2/>}</button><button className="icon-btn" onClick={()=>{setOverlay('alerts');setUnread(0)}}><Bell/>{unread>0&&<b>{unread}</b>}</button><button className="icon-btn trophy-action" onClick={()=>setOverlay('trophy')}><Trophy/><small>{new Set(effectiveUnlocks.filter(a=>a.user_id===user.id).map(a=>a.achievement_type)).size}</small></button></div></header><section className="button-stage">{locked?<CooldownScene/>:<BustButton phase={phase} onClick={startBust}/>}</section><button className="drawer-handle" onClick={()=>setOverlay('analytics')}><ChevronUp/> ANALYTICS BAY</button><Toasts toasts={toasts} setToasts={setToasts} onOpen={setSelected} mythicIds={mythicIds}/><AnimatePresence>{badgeToast&&<BadgeToast key="badge-toast" badge={badgeToast}/>} {overlay&&<Overlay key={`overlay-${overlay}`} title={overlayTitle(overlay)} onClose={()=>setOverlay(null)} showScrollTop={['profile','analytics','trophy'].includes(overlay)}>{overlay==='profile'&&<Profile user={user} setUser={setUser} busts={effectiveBusts} unlocks={effectiveUnlocks} users={users} onOpen={setSelected} mythicIds={mythicIds} debug={{xp:debugXp,setXp:setDebugXp,onBust:addDebugBust,onUnlock:addDebugUnlock,onClear:clearDebug,onResetCooldown:resetDebugCooldown,counts:{busts:debugBusts.length,unlocks:debugUnlocks.length}}}/>} {overlay==='alerts'&&<Alerts busts={effectiveBusts} onOpen={setSelected} mythicIds={mythicIds}/>} {overlay==='analytics'&&<Analytics data={analytics} busts={effectiveBusts} onOpen={setSelected} mythicIds={mythicIds}/>} {overlay==='trophy'&&<TrophyCabinet unlocks={effectiveUnlocks} busts={effectiveBusts} user={user}/>}</Overlay>} {selected&&<Detail key={`detail-${selected.id}`} bust={selected} all={effectiveBusts} currentUserId={user.id} onSaveNote={saveBustNote} onClose={()=>setSelected(null)} mythicIds={mythicIds}/>}</AnimatePresence>{phase==='explode'&&<Explosion/>}</main> }
 function GridBg(){ return <div className="grid-bg"/> }
 function BustButton({phase,onClick}){ return <motion.button className="bust-button" disabled={phase!=='idle'} onClick={onClick} animate={phase==='charge'?{scale:[1,1.07,.96,1.09,1],rotate:[0,-3,3,-5,5,0]}:{}} transition={{duration:.18,repeat:phase==='charge'?Infinity:0}}><span>{phase==='charge'?'Edging…':'BUST'}</span>{phase==='charge'&&<><i/><i/><i/><i/></>}</motion.button> }
 function Explosion(){ const drops=Array.from({length:110}); const ropes=Array.from({length:18}); const shards=Array.from({length:30}); return <div className="explosion"><div className="blast-flash"/>{ropes.map((_,i)=><b className="goop-rope" key={`r${i}`} style={{'--l':`${Math.random()*100}%`,'--w':`${22+Math.random()*80}px`,'--h':`${38+Math.random()*70}vh`,'--d':`${Math.random()*.55}s`}}/>)}{drops.map((_,i)=><span className="milk-drop" key={`d${i}`} style={{'--x':`${Math.random()*150-75}vw`,'--y':`${Math.random()*120-60}vh`,'--s':`${7+Math.random()*28}px`,'--d':`${Math.random()*1.1}s`}}/>)}{shards.map((_,i)=><i className="button-shard" key={`s${i}`} style={{'--x':`${Math.random()*120-60}vw`,'--y':`${Math.random()*100-50}vh`,'--r':`${Math.random()*900-450}deg`,'--d':`${Math.random()*.6}s`}}/>)}<div className="milk-sheet"/><div className="screen-splatter"/></div> }
@@ -489,7 +489,6 @@ function NoteModal({initial='',onSave,onClose}){ const [note,setNote]=useState(i
 function CooldownScene(){ return <div className="cooldown-scene" aria-label="BUST cooldown scene"><div className="iso"><div className="fallen">Busted</div></div></div> }
 const recordEmoji={Crown:'👑',Snowflake:'❄️',Gauge:'📈',AlarmClock:'⏰',Flame:'🔥',Repeat2:'🔁',Moon:'🌙',NotebookPen:'📝',Bitcoin:'🪙',BitcoinDown:'📉'};
 function RecordIcon({name}){ return <span className="record-emoji" aria-hidden="true">{recordEmoji[name]||'🏆'}</span> }
-function BadgeIcon({name}){ return <MIcon name={matMap[name]||name||'shield'}/> }
 function BadgeMedal({icon,accent,tier}){ const url=tier?tierUrl(tier):null; return <div className={`badge-medal${url?` tier-plated`:''}`} style={{'--badge':accent,...(url?{backgroundImage:`url(${url})`}:{})}}><BadgeIcon name={icon}/></div> }
 function BadgeToast({badge}){ if(!badge) return null; return <motion.div className="badge-toast mf-frame" initial={{opacity:0,y:-22,scale:.92}} animate={{opacity:1,y:0,scale:1}} exit={{opacity:0,y:-22}}><BadgeMedal icon={badge.micon||badge.icon} accent={badge.accent} tier={badge.tier}/><div><span>{badge.isRestorationSummary?'HISTORICAL RECONCILIATION':badge.isRestored?'ACHIEVEMENT RESTORED':'ACHIEVEMENT UNLOCKED'}</span><h2>{badge.isRestorationSummary?`${badge.restoredCount} historical achievements restored`:badge.name}</h2><p>{badge.isRestorationSummary?'View your Trophy Cabinet to inspect restored unlocks.':`${badge.tier.toUpperCase()} · ${badge.points} XP`}</p></div></motion.div> }
 function Overlay({title,onClose,children,showScrollTop=false}){ const ref=useRef(null); return <motion.section ref={ref} className="overlay" initial={{y:'100%'}} animate={{y:0}} exit={{y:'100%'}}><button className="close" onClick={onClose}><X/></button><div className="overlay-head"><h1>{title}</h1></div>{children}{showScrollTop&&<button type="button" className="scroll-top" aria-label="Back to top" title="Back to top" onClick={()=>ref.current?.scrollTo({top:0,behavior:'smooth'})}><ChevronUp/></button>}</motion.section> }

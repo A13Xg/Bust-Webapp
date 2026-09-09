@@ -393,3 +393,76 @@ img,svg,canvas{max-width:100%}
   .lightbox-close{right:14px;top:14px}
   .lightbox-back{padding:14px}
 }
+
+/* Token chip + its optional info button */
+.token-slot{display:inline-flex;align-items:stretch;gap:0}
+.token-info{width:30px;flex:none;background:#09090b;border:1px solid var(--line);border-left:0;color:var(--orange);font:900 13px Georgia,serif;font-style:italic;line-height:1}
+.token-info:hover{border-color:rgba(255,94,0,.5);background:rgba(255,94,0,.12)}
+
+/* Achievement picker */
+.ach-picker{position:relative;width:min(620px,94vw);max-height:86dvh;padding:40px 20px 18px;display:grid;grid-template-rows:auto auto 1fr;gap:12px;overflow:hidden}
+.ach-picker h2{margin:0}
+.ach-picker-filter{background:#09090b;border:1px solid var(--line);color:var(--ink);padding:11px;font:800 14px Tahoma,sans-serif;outline:0}
+.ach-picker-filter:focus{border-color:var(--orange)}
+.ach-picker-list{overflow-y:auto;display:grid;gap:6px;align-content:start;padding-right:4px}
+.ach-picker-list::-webkit-scrollbar{width:10px}
+.ach-picker-list::-webkit-scrollbar-thumb{background:rgba(255,94,0,.35);border-radius:999px}
+.ach-picker-row{display:grid;grid-template-columns:34px 1fr auto;grid-template-areas:"sprite name tier" "sprite id id";gap:2px 12px;align-items:center;width:100%;text-align:left;background:#09090b;border:1px solid var(--line);border-left:3px solid var(--tier,var(--orange));color:var(--ink);padding:9px 12px}
+.ach-picker-row:hover{background:rgba(255,94,0,.10);border-color:rgba(255,94,0,.45)}
+.ach-picker-sprite{grid-area:sprite;display:grid;place-items:center;width:34px;height:34px;color:var(--tier,var(--orange));border-radius:50%;background:color-mix(in srgb,var(--tier,#ff8a2a),transparent 88%);border:1px solid color-mix(in srgb,var(--tier,#ff8a2a),transparent 60%)}
+.ach-picker-sprite .msym{font-size:19px}
+.ach-picker-name{grid-area:name;font:900 14px Tahoma,sans-serif}
+.ach-picker-row .tier-chip{grid-area:tier}
+.ach-picker-row code{grid-area:id;color:var(--muted);font:700 11px IBM Plex Mono,monospace}
+
+@media(max-width:700px){
+  .ach-picker{width:calc(100vw - 24px);padding:36px 14px 14px}
+  .ach-picker-row code{display:none}
+}
+
+/* ---------------------------------------------------------------------------
+ * First-login Permissions dialog. One window, three phases, height animated
+ * by framer-motion's layout prop.
+ * ------------------------------------------------------------------------- */
+.perm-back{z-index:120}
+.perm-box{position:relative;width:min(470px,94vw);padding:28px 24px 22px;display:grid;gap:16px;overflow:hidden}
+.perm-box h2{margin:0;font-size:26px}
+.perm-phase{display:grid;gap:12px}
+
+/* The "why" panel: pulsing orange frame, on theme. */
+.perm-why{border:2px solid var(--orange);padding:16px 18px;animation:permPulse 1.9s ease-in-out infinite;clip-path:polygon(12px 0,calc(100% - 12px) 0,100% 12px,100% calc(100% - 12px),calc(100% - 12px) 100%,12px 100%,0 calc(100% - 12px),0 12px)}
+.perm-why p{margin:0;color:var(--ink);font-weight:700;line-height:1.5}
+@keyframes permPulse{
+  0%,100%{border-color:rgba(255,94,0,.45);box-shadow:0 0 0 0 rgba(255,94,0,.12)}
+  50%{border-color:var(--orange2);box-shadow:0 0 26px 3px rgba(255,94,0,.34)}
+}
+
+/* Checkbox rows */
+.perm-check{display:grid;grid-template-columns:auto auto 1fr;align-items:center;gap:12px;padding:13px 14px;border:1px solid var(--line);background:#09090b;cursor:pointer;font-weight:800}
+.perm-check:hover{border-color:rgba(255,94,0,.4)}
+.perm-check svg{width:20px;height:20px;color:var(--orange)}
+.perm-check input{accent-color:var(--orange);width:19px;height:19px;flex:none}
+.perm-check-hero{padding:17px 16px;border-color:rgba(255,94,0,.5);background:rgba(255,94,0,.08);font-size:17px}
+.perm-check-hero svg{width:25px;height:25px}
+.perm-check-hero input{width:22px;height:22px}
+.perm-check-quiet{grid-template-columns:auto 1fr;border:0;background:transparent;padding:2px 2px;color:var(--muted);font-size:13px}
+
+/* Status rows */
+.perm-row{display:grid;grid-template-columns:auto 1fr auto;gap:4px 12px;align-items:center;padding:13px 14px;border:1px solid var(--line);border-left:3px solid var(--muted);background:#09090b}
+.perm-row.ok{border-left-color:var(--orange)}
+.perm-row.bad{border-left-color:var(--danger)}
+.perm-row-icon{display:grid;place-items:center;color:var(--orange)}
+.perm-row-icon svg{width:20px;height:20px}
+.perm-row-label{font-weight:900;letter-spacing:1px}
+.perm-row-state{display:inline-flex;align-items:center;gap:6px;font:900 11px Tahoma,sans-serif;letter-spacing:1.5px;color:var(--muted)}
+.perm-row.ok .perm-row-state{color:var(--orange)}
+.perm-row.bad .perm-row-state{color:#ff6a55}
+.perm-row-x{width:15px;height:15px}
+.perm-row-hint{grid-column:2/-1;color:var(--muted);font:700 12px Tahoma,sans-serif;line-height:1.4}
+.perm-retry{grid-column:2/-1;justify-self:start;padding:8px 13px;font-size:12px;gap:7px}
+.perm-retry svg{width:15px;height:15px}
+
+@media(max-width:700px){
+  .perm-box{width:calc(100vw - 24px);padding:22px 16px 16px}
+  .perm-check{padding:12px}
+}

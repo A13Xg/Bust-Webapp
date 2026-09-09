@@ -15,6 +15,7 @@ import { X } from 'lucide-react';
 import { achievements } from './rules.js';
 import { backend } from './backend.js';
 import { describeTokens, renderBroadcast, unknownTokens } from './broadcastTemplate.js';
+import { MIcon, matMap } from './badgeIcons.jsx';
 import { Lightbox } from './Lightbox.jsx';
 
 const TABS = [
@@ -25,12 +26,73 @@ const TABS = [
   { id: 'session', label: 'SESSION' },
 ];
 
+/* --------------------------- Achievement picker --------------------------- */
+
+/*
+ * 132 achievements is too many to remember ids for, so the {{ACHIEVEMENT:…}}
+ * token gets a browser. Sprites resolve exactly the way the trophy cabinet
+ * resolves them, and are tinted by the tier's own --tier colour, so a row here
+ * looks like the badge it will name.
+ */
+function AchievementPicker({ onPick, onClose }) {
+  const [query, setQuery] = useState('');
+  const rows = useMemo(() => {
+    const sorted = achievements.slice().sort((a, b) => a.name.localeCompare(b.name));
+    const needle = query.trim().toLowerCase();
+    if (!needle) return sorted;
+    return sorted.filter(
+      item =>
+        item.name.toLowerCase().includes(needle) ||
+        item.id.toLowerCase().includes(needle) ||
+        item.tier.toLowerCase().includes(needle)
+    );
+  }, [query]);
+
+  return createPortal(
+    <div className="confirm-back" onClick={onClose}>
+      <div className="ach-picker mf-frame" onClick={e => e.stopPropagation()}>
+        <button className="detail-close" onClick={onClose} aria-label="Close achievement list">
+          <X />
+        </button>
+        <h2>Achievements</h2>
+        <input
+          className="ach-picker-filter"
+          autoFocus
+          placeholder="Filter by name, id or tier…"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+        />
+        <div className="ach-picker-list">
+          {rows.map(item => (
+            <button
+              key={item.id}
+              type="button"
+              className={`ach-picker-row tier-${item.tier}`}
+              onClick={() => onPick(item.id)}
+            >
+              <span className="ach-picker-sprite">
+                <MIcon name={item.micon || matMap[item.icon] || 'shield'} />
+              </span>
+              <span className="ach-picker-name">{item.name}</span>
+              <span className="tier-chip">{item.tier}</span>
+              <code>{item.id}</code>
+            </button>
+          ))}
+          {rows.length === 0 && <p className="showcase-hint">Nothing matches “{query}”.</p>}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 /* ------------------------------- Notify tab ------------------------------- */
 
 function NotifyTab({ username }) {
   const [title, setTitle] = useState('{{USER}} has busted');
   const [body, setBody] = useState('Sent by {{SENDER}} at {{TIME}} on {{DATE}}.');
   const [confirm, setConfirm] = useState(false);
+  const [picker, setPicker] = useState(false);
   const [state, setState] = useState({ status: 'idle', message: '' });
 
   /* Preview uses your own name for {{USER}}, which is only exact for your own
@@ -39,6 +101,7 @@ function NotifyTab({ username }) {
   const preview = { title: renderBroadcast(title, context), body: renderBroadcast(body, context) };
   const typos = useMemo(() => unknownTokens(`${title} ${body}`), [title, body]);
   const blank = !title.trim() && !body.trim();
+  const appendToken = token => setBody(prev => `${prev}${prev && !prev.endsWith(' ') ? ' ' : ''}${token}`);
 
   async function send() {
     setConfirm(false);
@@ -77,16 +140,28 @@ function NotifyTab({ username }) {
       <div className="token-sheet">
         <span className="mf-kicker">Insertable variables</span>
         {describeTokens().map(({ token, hint }) => (
-          <button
-            key={token}
-            type="button"
-            className="token-chip"
-            title={`Append ${token} to the body`}
-            onClick={() => setBody(prev => `${prev}${prev && !prev.endsWith(' ') ? ' ' : ''}${token}`)}
-          >
-            <code>{token}</code>
-            <em>{hint}</em>
-          </button>
+          <span key={token} className="token-slot">
+            <button
+              type="button"
+              className="token-chip"
+              title={`Append ${token} to the body`}
+              onClick={() => appendToken(token)}
+            >
+              <code>{token}</code>
+              <em>{hint}</em>
+            </button>
+            {token.startsWith('{{ACHIEVEMENT') && (
+              <button
+                type="button"
+                className="token-info"
+                title="Browse every achievement"
+                aria-label="Browse every achievement"
+                onClick={() => setPicker(true)}
+              >
+                i
+              </button>
+            )}
+          </span>
         ))}
       </div>
 
@@ -112,6 +187,16 @@ function NotifyTab({ username }) {
           {state.status === 'sending' ? 'SENDING…' : 'BROADCAST TO ALL USERS'}
         </button>
       </div>
+
+      {picker && (
+        <AchievementPicker
+          onClose={() => setPicker(false)}
+          onPick={id => {
+            appendToken(`{{ACHIEVEMENT:${id}}}`);
+            setPicker(false);
+          }}
+        />
+      )}
 
       {confirm &&
         createPortal(
