@@ -210,6 +210,14 @@ describe('PermissionsDialog', () => {
     expect(row('Notifications').querySelector('.perm-retry')).toBeTruthy();
   });
 
+  it('shows an install requirement when notifications are not supported', async () => {
+    setup({ push: { ok: false, permission: 'unsupported' } });
+    click('OKAY');
+    click('ACCEPT');
+    await waitFor(() => expect(row('Notifications').textContent).toContain('NOT SUPPORTED'));
+    expect(row('Notifications').textContent).toContain('Must Install App');
+  });
+
   it('only asks for what was checked', async () => {
     const { requestLocationFn, enablePush } = setup();
     click('OKAY');
