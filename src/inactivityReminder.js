@@ -1,20 +1,30 @@
-const HOUR_MS = 60 * 60 * 1000;
-export const FIRST_REMINDER_DELAY_MS = 52 * HOUR_MS;
-export const REMINDER_WINDOW_MS = 24 * HOUR_MS;
-export const MIN_REMINDER_INTERVAL_MS = 24 * HOUR_MS;
+import { INACTIVITY_MESSAGE_CATALOG } from './notificationMessages.js';
 
-export const INACTIVITY_MESSAGE_CATALOG = [
-  { text: 'Your cooldown ended hours ago. At this point, the inactivity appears deliberate.', weight: 5 },
-  { text: 'Impressive discipline. In all the wrong places.', weight: 4 },
-  { text: 'The BUST button misses you more than it should.', weight: 4 },
-  { text: 'Still no bust. Bold strategy for a pressure logger.', weight: 4 },
-  { text: 'Mission update: absolutely nothing has happened because of you.', weight: 4 },
-  { text: 'You have achieved peak inactivity. Congratulations, I guess.', weight: 2 },
-  { text: 'The crew is waiting. Your excuses are on schedule, at least.', weight: 2 },
-  { text: 'Reminder: this app works better when you actually bust.', weight: 2 },
-  { text: 'Your silence has been logged as tactical procrastination.', weight: 2 },
-  { text: 'Your inactivity streak is becoming your strongest stat.', weight: 2 },
-];
+/**
+ * Persisted reminder cycle for one user. Timestamps are ISO strings; they come
+ * back from Postgres in a different serialisation than Date#toISOString, so
+ * always compare them through toEpochMs rather than as strings.
+ *
+ * @typedef {{
+ *   cycleBustAt: string | null,
+ *   scheduledFor: string | null,
+ *   lastSentAt: string | null,
+ *   lastMessageIndex: number | null,
+ * }} ReminderState
+ */
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/*
+ * Cadence: the first nag lands 5-7 days after a user's last bust, and every
+ * follow-up re-rolls another 5-7 days out. The window is randomized per user so
+ * the whole crew is not pinged in lockstep.
+ */
+export const FIRST_REMINDER_DELAY_MS = 5 * DAY_MS;
+export const REMINDER_WINDOW_MS = 2 * DAY_MS;
+export const MIN_REMINDER_INTERVAL_MS = 5 * DAY_MS;
+
+export { INACTIVITY_MESSAGE_CATALOG };
 
 function toEpochMs(value) {
   if (value == null || value === '') return null;
@@ -84,6 +94,10 @@ function scheduleInWindow(windowStart, windowEnd, random) {
   return isoAt(randomBetween(windowStart, windowEnd, random));
 }
 
+/**
+ * @param {{ state?: ReminderState | null, latestBustAt?: string | null, now?: number, random?: () => number }} args
+ * @returns {ReminderState | null} null when the user has never busted.
+ */
 export function reconcileInactivityReminderState({ state, latestBustAt, now = Date.now(), random = Math.random }) {
   const cycleBustMs = toEpochMs(latestBustAt);
   if (cycleBustMs == null) return null;
@@ -95,7 +109,11 @@ export function reconcileInactivityReminderState({ state, latestBustAt, now = Da
     lastMessageIndex: null,
   };
 
-  if (state?.cycleBustAt === normalized.cycleBustAt) {
+  // Compare instants, never strings. Postgres serialises timestamptz as
+  // "…12:00:00.123456+00:00" while Date#toISOString gives "…12:00:00.123Z", so a
+  // string compare is false for every row read back from the database — which
+  // silently discards lastSentAt and re-fires the reminder on every dispatch.
+  if (toEpochMs(state?.cycleBustAt) === cycleBustMs) {
     normalized.scheduledFor = typeof state.scheduledFor === 'string' ? state.scheduledFor : null;
     normalized.lastSentAt = typeof state.lastSentAt === 'string' ? state.lastSentAt : null;
     normalized.lastMessageIndex = Number.isInteger(state.lastMessageIndex) ? state.lastMessageIndex : null;
@@ -150,6 +168,10 @@ function chooseWeightedMessageIndex(random = Math.random) {
   return INACTIVITY_MESSAGE_CATALOG.length - 1;
 }
 
+/**
+ * @param {{ random?: () => number, lastMessageIndex?: number | null }} [options]
+ * @returns {{ index: number, text: string }}
+ */
 export function pickInactivityReminderMessage({ random = Math.random, lastMessageIndex = null } = {}) {
   if (!INACTIVITY_MESSAGE_CATALOG.length) return { index: -1, text: 'Reminder: log a bust.' };
   let index = chooseWeightedMessageIndex(random);
@@ -163,6 +185,11 @@ export function buildInactivityReminderMessage(random = Math.random, lastMessage
   return pickInactivityReminderMessage({ random, lastMessageIndex }).text;
 }
 
+/**
+ * @param {ReminderState | null | undefined} state
+ * @param {{ now?: number, random?: () => number, messageIndex?: number | null }} [options]
+ * @returns {ReminderState | null}
+ */
 export function markInactivityReminderSent(state, { now = Date.now(), random = Math.random, messageIndex = null } = {}) {
   const cycleBustMs = toEpochMs(state?.cycleBustAt);
   if (cycleBustMs == null) return state || null;

@@ -1,0 +1,19 @@
+{
+  "//": "Deno config for the Edge Functions. Exists so `deno check` and `deno lint` can run over supabase/functions/ in CI — this code is not covered by the repo's eslint/tsc, which target the browser app. Runtime behaviour is unchanged: the functions declare their npm dependencies inline with npm: specifiers.",
+  "nodeModulesDir": "none",
+  "lint": {
+    "rules": {
+      "tags": ["recommended"],
+      "exclude": ["no-explicit-any"]
+    }
+  },
+  "fmt": {
+    "lineWidth": 120,
+    "singleQuote": true,
+    "semiColons": true
+  },
+  "compilerOptions": {
+    "strict": true,
+    "lib": ["deno.window", "deno.ns", "esnext"]
+  }
+}

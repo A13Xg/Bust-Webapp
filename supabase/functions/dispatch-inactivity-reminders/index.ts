@@ -1,5 +1,15 @@
+/*
+ * dispatch-inactivity-reminders — the 5-7 day "are you still alive" nag.
+ *
+ * Called on a schedule (see .github/workflows/notify-cron.yml). Each user's
+ * next reminder is a random point inside a 5-7 day window measured from their
+ * last bust, so the crew is never pinged in lockstep; a fresh bust resets the
+ * cycle via the bust_reset_inactivity_reminder trigger.
+ *
+ * Scheduling maths lives in src/inactivityReminder.js and is shared verbatim
+ * with the browser, so the server and the client agree on when a nag is due.
+ */
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import webpush from 'npm:web-push@3.6.7';
 import { fetchAllPages } from '../../../src/fetchAllPages.js';
 import {
   isInactivityReminderDue,
@@ -7,24 +17,9 @@ import {
   pickInactivityReminderMessage,
   reconcileInactivityReminderState,
 } from '../../../src/inactivityReminder.js';
+import { authorizeCron, corsHeaders, json, sendToSubscriptions } from '../_shared/push.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret',
-};
 const BATCH_SIZE = 200;
-
-function json(status: number, payload: unknown) {
-  return new Response(JSON.stringify(payload), {
-    status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-  });
-}
-
-function isGoneError(error: unknown) {
-  const statusCode = Number((error as { statusCode?: number })?.statusCode);
-  return statusCode === 404 || statusCode === 410;
-}
 
 Deno.serve(async req => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -33,41 +28,30 @@ Deno.serve(async req => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-    const vapidPublic = Deno.env.get('VAPID_PUBLIC_KEY');
-    const vapidPrivate = Deno.env.get('VAPID_PRIVATE_KEY');
-    if (!supabaseUrl || !serviceRoleKey || !vapidPublic || !vapidPrivate) {
-      throw new Error('Supabase function environment is incomplete');
-    }
+    if (!supabaseUrl || !serviceRoleKey) throw new Error('Supabase function environment is incomplete');
+    if (!authorizeCron(req, serviceRoleKey)) return json(401, { error: 'Unauthorized' });
 
-    const cronSecret = Deno.env.get('REMINDER_CRON_SECRET');
-    const authHeader = req.headers.get('Authorization');
-    const cronHeader = req.headers.get('x-cron-secret');
-    const serviceBearer = ['Bearer', serviceRoleKey].join(' ');
-    if ((cronSecret && cronHeader !== cronSecret) || (!cronSecret && authHeader !== serviceBearer)) {
-      return json(401, { error: 'Unauthorized' });
-    }
-
-    webpush.setVapidDetails('mailto:noreply@bust.local', vapidPublic, vapidPrivate);
     const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
-
     const now = Date.now();
-    const profiles = await fetchAllPages((from, to) =>
-      admin
-        .from('profiles')
-        .select('id,last_bust_timestamp')
-        .not('last_bust_timestamp', 'is', null)
-        .order('id', { ascending: true })
-        .range(from, to),
+
+    const profiles = await fetchAllPages(
+      (from: number, to: number) =>
+        admin
+          .from('profiles')
+          .select('id,last_bust_timestamp')
+          .not('last_bust_timestamp', 'is', null)
+          .order('id', { ascending: true })
+          .range(from, to),
       BATCH_SIZE
     );
 
     let sentCount = 0;
     let scheduledCount = 0;
-    let removedSubscriptions = 0;
+    let prunedSubscriptions = 0;
 
     for (let offset = 0; offset < profiles.length; offset += BATCH_SIZE) {
       const batch = profiles.slice(offset, offset + BATCH_SIZE);
-      const userIds = batch.map(profile => profile.id);
+      const userIds = batch.map((profile: { id: string }) => profile.id);
       if (!userIds.length) continue;
 
       const [statesResult, subscriptionsResult] = await Promise.all([
@@ -91,15 +75,16 @@ Deno.serve(async req => {
           },
         ])
       );
-      const subscriptionsByUser = new Map<string, Array<{ id: number; endpoint: string; p256dh: string; auth: string }>>();
+      const subscriptionsByUser = new Map<string, Array<{ id: number; user_id: string; endpoint: string; p256dh: string; auth: string }>>();
       for (const sub of subscriptionsResult.data || []) {
         if (!subscriptionsByUser.has(sub.user_id)) subscriptionsByUser.set(sub.user_id, []);
         subscriptionsByUser.get(sub.user_id)?.push(sub);
       }
 
+      const upserts: Array<Record<string, unknown>> = [];
+
       for (const profile of batch) {
         const subscriptions = subscriptionsByUser.get(profile.id) || [];
-        if (!subscriptions.length) continue;
         const reconciled = reconcileInactivityReminderState({
           state: stateByUser.get(profile.id) || null,
           latestBustAt: profile.last_bust_timestamp,
@@ -108,39 +93,35 @@ Deno.serve(async req => {
         if (!reconciled) continue;
 
         let nextState = reconciled;
-        if (isInactivityReminderDue(reconciled, profile.last_bust_timestamp, now)) {
+        // No subscription means nothing to deliver to; keep the schedule warm so
+        // the user starts receiving nags as soon as they arm a device.
+        if (subscriptions.length && isInactivityReminderDue(reconciled, profile.last_bust_timestamp, now)) {
           const chosen = pickInactivityReminderMessage({ lastMessageIndex: reconciled.lastMessageIndex });
-          const payload = JSON.stringify({
-            title: 'BUST Inactivity Reminder',
-            body: chosen.text,
-            tag: `bust-inactivity-${profile.id}`,
-            data: { type: 'inactivity-reminder' },
-          });
-          let delivered = false;
-          for (const sub of subscriptions) {
-            try {
-              await webpush.sendNotification(
-                { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-                payload,
-                { TTL: 60 * 60 }
-              );
-              delivered = true;
-            } catch (error) {
-              if (isGoneError(error)) {
-                await admin.from('push_subscriptions').delete().eq('id', sub.id);
-                removedSubscriptions += 1;
-              } else {
-                console.error('[dispatch-inactivity-reminders] send failed', error);
-              }
-            }
-          }
-          if (delivered) {
-            nextState = markInactivityReminderSent(reconciled, { now, messageIndex: chosen.index });
+          const result = await sendToSubscriptions(
+            admin,
+            subscriptions,
+            {
+              title: 'BUST is waiting',
+              body: chosen.text,
+              tag: `bust-inactivity-${profile.id}`,
+              kind: 'inactivity',
+              data: { kind: 'inactivity' },
+            },
+            // Outliving one dispatch interval is pointless for a nag.
+            { ttlSeconds: 6 * 60 * 60 }
+          );
+          prunedSubscriptions += result.pruned;
+          if (result.delivered > 0) {
+            // markInactivityReminderSent returns null for a state with no
+            // cycle timestamp, which reconciled cannot be here — keep the
+            // previous state rather than asserting that away.
+            const advanced = markInactivityReminderSent(reconciled, { now, messageIndex: chosen.index });
+            if (advanced) nextState = advanced;
             sentCount += 1;
           }
         }
 
-        const { error: upsertError } = await admin.from('inactivity_reminders').upsert({
+        upserts.push({
           user_id: profile.id,
           cycle_bust_at: nextState.cycleBustAt,
           scheduled_for: nextState.scheduledFor,
@@ -148,12 +129,21 @@ Deno.serve(async req => {
           last_message_index: nextState.lastMessageIndex,
           updated_at: new Date(now).toISOString(),
         });
+      }
+
+      if (upserts.length) {
+        const { error: upsertError } = await admin.from('inactivity_reminders').upsert(upserts);
         if (upsertError) throw new Error(upsertError.message);
-        scheduledCount += 1;
+        scheduledCount += upserts.length;
       }
     }
 
-    return json(200, { ok: true, sent: sentCount, usersScheduled: scheduledCount, staleSubscriptionsRemoved: removedSubscriptions });
+    return json(200, {
+      ok: true,
+      sent: sentCount,
+      usersScheduled: scheduledCount,
+      staleSubscriptionsRemoved: prunedSubscriptions,
+    });
   } catch (error) {
     console.error('[dispatch-inactivity-reminders]', error);
     return json(500, { error: error instanceof Error ? error.message : 'Dispatch failed' });

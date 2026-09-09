@@ -43,6 +43,20 @@ jobs:
         run: npm run format:check
       - name: Lint
         run: npm run lint
+
+      # The Edge Functions are Deno TypeScript and are invisible to eslint/tsc,
+      # which target the browser app. Without these two steps a type error or a
+      # bad import in supabase/functions/ only ever surfaces in production.
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Lint Edge Functions
+        run: npm run lint:functions
+
+      - name: Typecheck Edge Functions
+        run: npm run typecheck:functions
+
       - name: Prepare database schema
         run: npm run db:migrate
       - name: Unit tests

@@ -4,5 +4,24 @@ verify_jwt = true
 [functions.register-push-subscription]
 verify_jwt = true
 
+# Announces one of the caller's own rows to the rest of the crew. JWT-verified:
+# the function additionally checks the row belongs to the caller and is fresh.
+[functions.notify-event]
+verify_jwt = true
+
+# Scheduled entry points. No end-user JWT exists for a cron run, so they
+# authenticate with REMINDER_CRON_SECRET (x-cron-secret) or a service-role bearer.
 [functions.dispatch-inactivity-reminders]
 verify_jwt = false
+
+[functions.dispatch-push-backstop]
+verify_jwt = false
+
+[functions.broadcast-test-notification]
+verify_jwt = true
+
+[functions.admin-set-password]
+verify_jwt = true
+
+[functions.delete-account]
+verify_jwt = true

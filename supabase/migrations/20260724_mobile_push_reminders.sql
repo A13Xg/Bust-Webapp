@@ -1,6 +1,20 @@
 -- Mobile-first web push reminders (standardized cadence, no user-configurable quiet hours/preferences)
-create extension if not exists pg_net with schema extensions;
-create extension if not exists pg_cron with schema extensions;
+-- pg_net/pg_cron are optional: dispatch is driven by a scheduled GitHub Actions
+-- workflow (see 20260907_push_delivery.sql). Creating them requires elevated
+-- privileges that a migration role may not hold, so never fail the migration
+-- over it.
+do $$
+begin
+  create extension if not exists pg_net with schema extensions;
+exception when others then null;
+end;
+$$;
+do $$
+begin
+  create extension if not exists pg_cron with schema extensions;
+exception when others then null;
+end;
+$$;
 
 create table if not exists public.push_subscriptions (
   id bigint generated always as identity primary key,

@@ -57,9 +57,13 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_WEB_PUSH_PUBLIC_KEY: ${{ secrets.VITE_WEB_PUSH_PUBLIC_KEY }}
         run: |
-          test -n "$VITE_SUPABASE_URL"
-          test -n "$VITE_SUPABASE_ANON_KEY"
+          test -n "$VITE_SUPABASE_URL" || { echo "::error::VITE_SUPABASE_URL is not set"; exit 1; }
+          test -n "$VITE_SUPABASE_ANON_KEY" || { echo "::error::VITE_SUPABASE_ANON_KEY is not set"; exit 1; }
+          # Without the VAPID public key the app builds fine and then silently
+          # refuses to create push subscriptions. Fail here instead.
+          test -n "$VITE_WEB_PUSH_PUBLIC_KEY" || { echo "::error::VITE_WEB_PUSH_PUBLIC_KEY is not set — push notifications would ship disabled"; exit 1; }
       - name: Build webpage for GitHub Pages
         env:
           GHPAGES_BASE: /${{ github.event.repository.name }}/

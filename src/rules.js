@@ -328,6 +328,10 @@ export function deriveAllTimeRecords(busts = []) {
   safeBusts.filter(b => timeBucket(b.timestamp) === 'Late Night').forEach(b => { const k = b.username || 'Unknown'; nightCounts.set(k, (nightCounts.get(k) || 0) + 1); });
   const nightOwl = [...nightCounts.entries()].sort((a, b) => b[1] - a[1])[0];
   const wordsmith = [...safeBusts].filter(b => b.note).sort((a, b) => (b.note || '').length - (a.note || '').length)[0];
+  const withBtc = safeBusts.map(b => ({ ...b, _btc: finiteNumber(b.btc_usd) })).filter(b => b._btc != null);
+  const btcPeak = [...withBtc].sort((a, b) => b._btc - a._btc)[0];
+  const btcTrough = [...withBtc].sort((a, b) => a._btc - b._btc)[0];
+  const usd = value => `$${Math.round(value).toLocaleString('en-US')}`;
   const byUser = new Map();
   safeBusts.forEach(b => { const k = b.username || 'Unknown'; if (!byUser.has(k)) byUser.set(k, []); byUser.get(k).push(b); });
   const streakKing = [...byUser.entries()].map(([name, list]) => ({ name, longest: deriveStreaks(list).longest })).sort((a, b) => b.longest - a.longest)[0];
@@ -340,6 +344,8 @@ export function deriveAllTimeRecords(busts = []) {
     { id: 'hottest_bust', label: 'Hottest Bust', value: hottest ? `${Math.round(hottest._temp)}°F` : '—', detail: hottest ? `${hottest.username || 'Unknown'} · ${timeBucket(hottest.timestamp)}` : 'Awaiting weather data', icon: 'Flame' },
     { id: 'streak_king', label: 'Streak King', value: streakKing && streakKing.longest > 0 ? `${streakKing.longest}d` : '—', detail: streakKing ? `${streakKing.name} · consecutive days` : 'No events yet', icon: 'Repeat2' },
     { id: 'night_owl', label: 'Night Owl', value: nightOwl?.[0] || '—', detail: nightOwl ? `${nightOwl[1]} late-night events` : 'No 12–4 AM activity', icon: 'Moon' },
-    { id: 'wordsmith', label: 'Wordsmith', value: wordsmith?.username || '—', detail: wordsmith ? `${wordsmith.note.length}-char field report` : 'No notes filed', icon: 'NotebookPen' }
+    { id: 'wordsmith', label: 'Wordsmith', value: wordsmith?.username || '—', detail: wordsmith ? `${wordsmith.note.length}-char field report` : 'No notes filed', icon: 'NotebookPen' },
+    { id: 'btc_peak', label: 'Peak Bitcoin', value: btcPeak ? usd(btcPeak._btc) : '—', detail: btcPeak ? `${btcPeak.username || 'Unknown'} · ${timeBucket(btcPeak.timestamp)}` : 'Awaiting market data', icon: 'Bitcoin' },
+    { id: 'btc_trough', label: 'Bottom Ticker', value: btcTrough ? usd(btcTrough._btc) : '—', detail: btcTrough ? `${btcTrough.username || 'Unknown'} · ${timeBucket(btcTrough.timestamp)}` : 'Awaiting market data', icon: 'BitcoinDown' }
   ];
 }

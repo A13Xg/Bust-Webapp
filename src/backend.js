@@ -37,6 +37,10 @@ const serverBackend = {
   async registerPushSubscription(subscription, meta = {}) {
     return await rest('/push-subscriptions', { method: 'POST', body: JSON.stringify({ subscription, ...meta }) });
   },
+  // Server mode has no VAPID sender; the open tab notifies locally instead.
+  async notifyEvent() { return { ok: false, reason: 'unsupported_in_server_mode' }; },
+  async broadcastTestNotification() { return { ok: false, reason: 'unsupported_in_server_mode' }; },
+  async adminSetPassword() { return { ok: false, reason: 'unsupported_in_server_mode' }; },
   webPushPublicKey() { return WEB_PUSH_PUBLIC_KEY; },
   async patchProfile(patch) { return (await rest('/profile', { method: 'PATCH', body: JSON.stringify(patch) })).user; },
   subscribe({ onBust, onProfile, onStatus }) {
@@ -84,6 +88,18 @@ const serverBackend = {
 /* ---------------------------------- static / Supabase mode ---------------------------------- */
 let supa = null;
 let profileCache = new Map();
+/* supabase-js reports a non-2xx Edge Function response as a generic
+ * FunctionsHttpError and tucks the real response on `context`. Without this the
+ * UI can only say "Edge Function returned a non-2xx status code". */
+async function readFunctionError(error) {
+  try {
+    const payload = await error?.context?.json?.();
+    return payload?.error || null;
+  } catch {
+    return null;
+  }
+}
+
 async function getSupa() {
   if (!supa) {
     const { createClient } = await import('@supabase/supabase-js');
@@ -91,6 +107,10 @@ async function getSupa() {
   }
   return supa;
 }
+/* Compared case-insensitively and trimmed. This code ships inside the client
+ * bundle either way, so guarding its capitalisation buys nothing and only makes
+ * it annoying to type. */
+const INVITE_CODE = 'bust4me';
 const synthEmail = u => `${String(u).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')}@bust-ops.dev`;
 function toUser(p) { return p ? { id: p.id, username: p.username, avatar_seed: p.avatar_seed, created_at: p.created_at, last_bust_timestamp: p.last_bust_timestamp, tagline: p.tagline || null, showcase: p.showcase || null } : null; }
 function joinBust(b) { const p = profileCache.get(b.user_id) || {}; return { ...b, username: p.username || 'Unknown', avatar_seed: p.avatar_seed || 'bust' }; }
@@ -117,11 +137,16 @@ const staticBackend = {
     return myProfile(sb);
   },
   async signup({ username, password, inviteCode }) {
-    if (inviteCode !== 'Bust4Me') throw new Error('That secret handshake is not on the list.');
+    if (String(inviteCode).trim().toLowerCase() !== INVITE_CODE) throw new Error('That secret handshake is not on the list.');
     if (!/^[a-zA-Z0-9_ -]{2,32}$/.test(username)) throw new Error('Username must be 2-32 simple characters');
     if (String(password).length < 6) throw new Error('Password must be at least 6 characters');
     const sb = await getSupa();
-    const taken = await sb.from('profiles').select('id').ilike('username', username.trim()).maybeSingle();
+    // Not ilike: '_' and '%' are wildcards there and the username pattern permits
+    // '_', so 'Alex_' matched an existing 'AlexG' and was wrongly reported taken.
+    // This is a courtesy check only — the unique index on lower(username) is the
+    // real guard, and it is what closes the race between check and insert.
+    const wanted = username.trim();
+    const taken = await sb.from('profiles').select('id').eq('username', wanted).maybeSingle();
     if (taken.data) throw new Error('Username already exists');
     const { data, error } = await sb.auth.signUp({ email: synthEmail(username), password });
     if (error) throw new Error(/already/i.test(error.message) ? 'Username already exists' : error.message);
@@ -129,16 +154,24 @@ const staticBackend = {
     if (!uid) throw new Error('Signup failed — is email confirmation disabled in Supabase Auth settings?');
     const profile = { id: uid, username: username.trim(), avatar_seed: `${username}-${Date.now()}` };
     const ins = await sb.from('profiles').insert(profile).select().single();
-    if (ins.error) { await sb.auth.signOut(); throw new Error(ins.error.code === '23505' ? 'Username already exists' : ins.error.message); }
+    if (ins.error) { await sb.auth.signOut(); throw new Error(ins.error.code === '23505' || /profiles_username_lower_key/.test(ins.error.message || '') ? 'Username already exists' : ins.error.message); }
     return toUser(ins.data);
   },
   async logout() { const sb = await getSupa(); await sb.auth.signOut(); },
+  /* Deletes the auth user, not just the profile. Removing only the profile left
+   * the auth.users row behind holding this username's synthetic email, so
+   * signing up again with the same name failed as "Username already exists".
+   * Deleting the auth user cascades the profile away and frees the name. */
   async deleteAccount() {
     const sb = await getSupa();
     const { data: { user } } = await sb.auth.getUser();
     if (!user) throw new Error('Not signed in');
-    const { error } = await sb.from('profiles').delete().eq('id', user.id);
-    if (error) throw new Error(error.message);
+    const { data, error } = await sb.functions.invoke('delete-account', { body: {} });
+    if (error) {
+      const detail = await readFunctionError(error);
+      throw new Error(detail || error.message || 'Account deletion failed');
+    }
+    if (data?.error) throw new Error(data.error);
     await sb.auth.signOut();
   },
   async dashboard() {
@@ -164,7 +197,7 @@ const staticBackend = {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) throw new Error('Not signed in');
     const now = new Date();
-    const row = { user_id: user.id, timestamp: now.toISOString(), note: String(payload.note || '').slice(0, 240), temp_f: payload.temp_f, pressure: payload.pressure, lat: payload.lat, long: payload.long, city: payload.city, elevation_ft: payload.elevation_ft, tide_ft: payload.tide_ft, time_bucket: timeBucket(now) };
+    const row = { user_id: user.id, timestamp: now.toISOString(), note: String(payload.note || '').slice(0, 240), temp_f: payload.temp_f, pressure: payload.pressure, lat: payload.lat, long: payload.long, city: payload.city, elevation_ft: payload.elevation_ft, tide_ft: payload.tide_ft, btc_usd: payload.btc_usd, time_bucket: timeBucket(now) };
     const { data, error } = await sb.from('busts').insert(row).select().single();
     if (error) throw new Error(/policy|row-level|cooldown/i.test(error.message) ? 'Cooldown is still active' : error.message);
     return joinBust(data);
@@ -195,6 +228,50 @@ const staticBackend = {
       body: { subscription, ...meta },
     });
     if (error) throw new Error(error.message || 'Push subscription registration failed');
+    if (data?.error) throw new Error(data.error);
+    return data || { ok: true };
+  },
+  /* Announce one of the caller's own rows to the rest of the crew. Fire-and-forget
+   * from the caller's perspective: dispatch-push-backstop re-sends anything this
+   * call loses, and the push_events ledger stops it arriving twice. */
+  async notifyEvent(kind, id) {
+    if (!kind || !id) return { ok: false, reason: 'missing_event' };
+    const sb = await getSupa();
+    const { data, error } = await sb.functions.invoke('notify-event', { body: { kind, id } });
+    if (error) throw new Error(error.message || 'Crew notification failed');
+    if (data?.error) throw new Error(data.error);
+    return data || { ok: true };
+  },
+  /* Debug-menu only: push an arbitrary message to EVERY registered device,
+   * including the caller's own. Server-side an allowlist decides who may do
+   * this; deliberately not run through the push_events ledger, because a
+   * manual test send is something you may legitimately want to repeat. */
+  async broadcastTestNotification({ title, body } = {}) {
+    if (!String(title || '').trim() && !String(body || '').trim()) return { ok: false, reason: 'empty_message' };
+    const sb = await getSupa();
+    const { data, error } = await sb.functions.invoke('broadcast-test-notification', { body: { title, body } });
+    if (error) {
+      // The function returns 403 for a non-allowlisted caller; surface the
+      // function's own message rather than the SDK's generic wrapper.
+      const detail = await readFunctionError(error);
+      throw new Error(detail || error.message || 'Broadcast failed');
+    }
+    if (data?.error) throw new Error(data.error);
+    return data || { ok: true };
+  },
+  /* Debug-menu only: set another account's password outright. The service-role
+   * key that makes this possible never leaves the Edge Function; the same
+   * allowlist that gates broadcasting gates this, and it is strictly more
+   * powerful — it is account takeover. */
+  async adminSetPassword({ userId, password } = {}) {
+    if (!userId) return { ok: false, reason: 'missing_user' };
+    if (String(password || '').length < 6) return { ok: false, reason: 'password_too_short' };
+    const sb = await getSupa();
+    const { data, error } = await sb.functions.invoke('admin-set-password', { body: { userId, password } });
+    if (error) {
+      const detail = await readFunctionError(error);
+      throw new Error(detail || error.message || 'Password update failed');
+    }
     if (data?.error) throw new Error(data.error);
     return data || { ok: true };
   },

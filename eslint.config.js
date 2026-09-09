@@ -1,13 +1,28 @@
 import globals from 'globals';
 import react from 'eslint-plugin-react';
+import reactHooks from 'eslint-plugin-react-hooks';
+
+const rules = {
+  'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+  'no-undef': 'error',
+  'no-constant-condition': 'warn',
+  'no-dupe-keys': 'error',
+  'no-duplicate-case': 'error',
+  'no-self-assign': 'error',
+  'no-unreachable': 'warn',
+};
 
 export default [
   {
-    ignores: ['dist/**', 'node_modules/**', 'public/**'],
+    // public/ is not ignored wholesale any more: everything in it except sw.js
+    // is a static asset that no `files` pattern matches, so it is never linted,
+    // while sw.js now is. (ESLint cannot un-ignore a file inside an ignored
+    // directory, so the blanket public/** ignore had to go.)
+    ignores: ['dist/**', 'node_modules/**'],
   },
   {
     files: ['src/**/*.{js,jsx}', 'server/**/*.js', 'scripts/**/*.mjs'],
-    plugins: { react },
+    plugins: { react, 'react-hooks': reactHooks },
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
@@ -20,14 +35,27 @@ export default [
       },
     },
     rules: {
-      'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
-      'no-undef': 'error',
-      'no-constant-condition': 'warn',
-      'no-dupe-keys': 'error',
-      'no-duplicate-case': 'error',
-      'no-self-assign': 'error',
-      'no-unreachable': 'warn',
+      ...rules,
       'react/jsx-uses-vars': 'error',
+      // Without these, a wrong hook dependency or a conditional hook is
+      // invisible to CI — exactly the class of bug the hook-heavy dialogs and
+      // the debug menu are most likely to grow.
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
     },
+  },
+  {
+    // The service worker runs in a different global scope (`self`, `clients`,
+    // `registration`) and used to be excluded from every check, so a typo in it
+    // would only ever surface as a push that silently did nothing.
+    files: ['public/sw.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'script',
+      globals: {
+        ...globals.serviceworker,
+      },
+    },
+    rules,
   },
 ];

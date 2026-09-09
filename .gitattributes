@@ -1,0 +1,6 @@
+# Normalise line endings so a Windows checkout does not fight CI's Linux checkout.
+* text=auto eol=lf
+*.png binary
+*.mp3 binary
+*.glb binary
+*.woff2 binary

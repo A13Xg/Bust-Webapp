@@ -1,0 +1,81 @@
+name: Notification dispatch
+
+# Drives the two scheduled Supabase Edge Functions.
+#
+# Why GitHub Actions instead of pg_cron: pg_cron would need the project's
+# service-role key and function URL stored inside the database to build the
+# outbound request. Running the schedule here keeps that secret in one place,
+# makes every run auditable in the Actions log, and can be re-run by hand when
+# something looks wrong.
+#
+# * dispatch-push-backstop     — re-sends bust/achievement announcements the
+#                                acting client failed to make. Idempotent: the
+#                                push_events ledger blocks duplicates.
+# * dispatch-inactivity-reminders — the 5-7 day nag. Each user's slot is random
+#                                inside their window, so hourly polling is
+#                                plenty; running it more often changes nothing.
+on:
+  schedule:
+    # Every 10 minutes for the backstop cadence. GitHub may delay scheduled runs
+    # under load, which is fine — both endpoints are idempotent.
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Which dispatcher to run
+        required: false
+        default: both
+        type: choice
+        options: [both, backstop, reminders]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: notify-cron
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    name: Dispatch notifications
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify dispatch secrets
+        env:
+          SUPABASE_FUNCTIONS_URL: ${{ secrets.SUPABASE_FUNCTIONS_URL }}
+          REMINDER_CRON_SECRET: ${{ secrets.REMINDER_CRON_SECRET }}
+        run: |
+          test -n "$SUPABASE_FUNCTIONS_URL" || { echo "::error::SUPABASE_FUNCTIONS_URL is not set"; exit 1; }
+          test -n "$REMINDER_CRON_SECRET" || { echo "::error::REMINDER_CRON_SECRET is not set"; exit 1; }
+
+      - name: Push backstop
+        if: ${{ github.event_name == 'schedule' || inputs.target == 'both' || inputs.target == 'backstop' }}
+        env:
+          SUPABASE_FUNCTIONS_URL: ${{ secrets.SUPABASE_FUNCTIONS_URL }}
+          REMINDER_CRON_SECRET: ${{ secrets.REMINDER_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          body=$(mktemp)
+          status=$(curl -sS -o "$body" -w '%{http_code}' --max-time 120 \
+            -X POST "$SUPABASE_FUNCTIONS_URL/dispatch-push-backstop" \
+            -H "Content-Type: application/json" \
+            -H "x-cron-secret: $REMINDER_CRON_SECRET" \
+            -d '{}')
+          echo "HTTP $status"; cat "$body"; echo
+          test "$status" = "200"
+
+      - name: Inactivity reminders
+        if: ${{ github.event_name == 'schedule' || inputs.target == 'both' || inputs.target == 'reminders' }}
+        env:
+          SUPABASE_FUNCTIONS_URL: ${{ secrets.SUPABASE_FUNCTIONS_URL }}
+          REMINDER_CRON_SECRET: ${{ secrets.REMINDER_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          body=$(mktemp)
+          status=$(curl -sS -o "$body" -w '%{http_code}' --max-time 180 \
+            -X POST "$SUPABASE_FUNCTIONS_URL/dispatch-inactivity-reminders" \
+            -H "Content-Type: application/json" \
+            -H "x-cron-secret: $REMINDER_CRON_SECRET" \
+            -d '{}')
+          echo "HTTP $status"; cat "$body"; echo
+          test "$status" = "200"

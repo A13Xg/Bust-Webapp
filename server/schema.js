@@ -10,6 +10,9 @@ create table if not exists users (
   tagline text,
   showcase text
 );
+-- One identity per name regardless of case. Without this, 'AlexG' and 'alexg'
+-- are two rows and /api/login's lower(username) match silently takes rows[0].
+create unique index if not exists users_username_lower_key on users (lower(username));
 alter table users add column if not exists tagline text;
 alter table users add column if not exists showcase text;
 create table if not exists busts (
@@ -24,10 +27,12 @@ create table if not exists busts (
   city text,
   elevation_ft numeric,
   tide_ft numeric,
+  btc_usd numeric,
   time_bucket text not null
 );
 alter table busts add column if not exists elevation_ft numeric;
 alter table busts add column if not exists tide_ft numeric;
+alter table busts add column if not exists btc_usd numeric;
 create table if not exists achievements (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references users(id) on delete cascade,
