@@ -25,3 +25,13 @@ verify_jwt = true
 
 [functions.delete-account]
 verify_jwt = true
+
+# The service worker acknowledging a delivered notification. No end-user JWT is
+# available inside a worker, so this authenticates on the unguessable per-delivery
+# receipt id carried in the push payload instead.
+[functions.ack-push]
+verify_jwt = false
+
+# Reads the delivery log for the debug menu. Admin allowlist enforced in-function.
+[functions.push-delivery-report]
+verify_jwt = true

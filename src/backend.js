@@ -227,9 +227,32 @@ const staticBackend = {
     const { data, error } = await sb.functions.invoke('register-push-subscription', {
       body: { subscription, ...meta },
     });
-    if (error) throw new Error(error.message || 'Push subscription registration failed');
+    if (error) {
+      // The SDK reports every non-2XX as "Edge Function returned a non-2xx
+      // status code", which hides the function's own reason — a 401 from an
+      // unrestored session reads identically to a 500 from a failed upsert, and
+      // the 401 paths log nothing server-side. Surface the body, and the status
+      // when there is no body to read.
+      const detail = await readFunctionError(error);
+      const status = error?.context?.status;
+      throw new Error(
+        detail || (status ? `Push registration failed (HTTP ${status})` : error.message) || 'Push subscription registration failed'
+      );
+    }
     if (data?.error) throw new Error(data.error);
     return data || { ok: true };
+  },
+  /* Debug-menu only: the push delivery log. Admin-gated server-side, the same
+   * way the broadcast is — the log records which account received what. */
+  async pushDeliveryReport() {
+    const sb = await getSupa();
+    const { data, error } = await sb.functions.invoke('push-delivery-report', { body: {} });
+    if (error) {
+      const detail = await readFunctionError(error);
+      throw new Error(detail || error.message || 'Delivery report failed');
+    }
+    if (data?.error) throw new Error(data.error);
+    return { deliveries: data?.deliveries || [], unavailable: data?.unavailable || null };
   },
   /* Announce one of the caller's own rows to the rest of the crew. Fire-and-forget
    * from the caller's perspective: dispatch-push-backstop re-sends anything this

@@ -9,6 +9,7 @@
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { achievements } from '../../../src/rules.js';
 import { buildAchievementNotification, buildBustNotification } from '../../../src/notificationMessages.js';
+import { achievementSlotId } from '../../../src/pushCooldown.js';
 import {
   claimPushEvent,
   finishPushEvent,
@@ -22,7 +23,25 @@ const achievementById = new Map(achievements.map((item: { id: string }) => [item
 
 export type AnnounceOutcome =
   | { status: 'sent'; kind: string; sourceId: string; result: DeliveryResult }
-  | { status: 'duplicate' | 'no-recipients' | 'unknown' | 'failed'; kind: string; sourceId: string };
+  | { status: 'duplicate' | 'no-recipients' | 'unknown' | 'failed' | 'suppressed'; kind: string; sourceId: string };
+
+/**
+ * Record a row as handled without pushing anything. The claim is the point: an
+ * unclaimed row stays visible to dispatch-push-backstop, which would re-evaluate
+ * it on every run for its whole lookback window and announce it the moment the
+ * cooldown lapsed — turning the cap into a delay.
+ */
+async function claimWithoutSending(
+  admin: SupabaseClient,
+  kind: 'bust' | 'achievement',
+  sourceId: string,
+  actorId: string
+) {
+  const eventId = await claimPushEvent(admin, kind, sourceId, actorId);
+  if (eventId != null) {
+    await finishPushEvent(admin, eventId, { attempted: 0, delivered: 0, pruned: 0, failures: [] });
+  }
+}
 
 async function usernameFor(admin: SupabaseClient, userId: string) {
   const { data } = await admin.from('profiles').select('username').eq('id', userId).maybeSingle();
@@ -34,10 +53,17 @@ async function announce(
   kind: 'bust' | 'achievement',
   sourceId: string,
   actorId: string,
-  payload: { title: string; body: string; tag: string; kind: string }
+  payload: { title: string; body: string; tag: string; kind: string },
+  // A cooldown slot held on the caller's behalf. Released alongside the row's own
+  // claim if the send fails, so one transient failure does not burn the whole
+  // window and lock the backstop out of retrying.
+  slotEventId: number | null = null
 ): Promise<AnnounceOutcome> {
   const eventId = await claimPushEvent(admin, kind, sourceId, actorId);
-  if (eventId == null) return { status: 'duplicate', kind, sourceId };
+  if (eventId == null) {
+    if (slotEventId != null) await releasePushEvent(admin, slotEventId);
+    return { status: 'duplicate', kind, sourceId };
+  }
 
   try {
     const subscriptions = await subscriptionsForCrew(admin, actorId);
@@ -46,7 +72,7 @@ async function announce(
       return { status: 'no-recipients', kind, sourceId };
     }
 
-    const result = await sendToSubscriptions(admin, subscriptions, { ...payload, data: { kind, sourceId } });
+    const result = await sendToSubscriptions(admin, subscriptions, { ...payload, data: { kind, sourceId } }, { actorId });
     await finishPushEvent(admin, eventId, result);
     return { status: 'sent', kind, sourceId, result };
   } catch (error) {
@@ -55,6 +81,7 @@ async function announce(
     // backstop would see the row and skip it forever. Release it so the sweep
     // can retry, and let the caller see the failure.
     await releasePushEvent(admin, eventId);
+    if (slotEventId != null) await releasePushEvent(admin, slotEventId);
     console.error('[announce] release after failure', kind, sourceId, error);
     return { status: 'failed', kind, sourceId };
   }
@@ -87,12 +114,26 @@ export async function announceAchievement(
   // so the scheduled sweep evaluates it once rather than on every run for the
   // whole lookback window, then decline to announce it.
   if (!meta) {
-    const eventId = await claimPushEvent(admin, 'achievement', achievement.id, achievement.user_id);
-    if (eventId != null) {
-      await finishPushEvent(admin, eventId, { attempted: 0, delivered: 0, pruned: 0, failures: [] });
-    }
+    await claimWithoutSending(admin, 'achievement', achievement.id, achievement.user_id);
     return { status: 'unknown' as const, kind: 'achievement', sourceId: achievement.id };
   }
+
+  // One achievement push per actor per cooldown window. Claiming the slot is
+  // what makes this safe under concurrency: the client fires its announcements
+  // in parallel, so a read-then-check would let a whole burst through. The
+  // unique index on (kind, source_id) arbitrates instead.
+  const slotEventId = await claimPushEvent(
+    admin,
+    'achievement',
+    achievementSlotId(achievement.user_id, Date.now()),
+    achievement.user_id
+  );
+  if (slotEventId == null) {
+    await claimWithoutSending(admin, 'achievement', achievement.id, achievement.user_id);
+    return { status: 'suppressed' as const, kind: 'achievement', sourceId: achievement.id };
+  }
+  await finishPushEvent(admin, slotEventId, { attempted: 0, delivered: 0, pruned: 0, failures: [] });
+
   const name = username || (await usernameFor(admin, achievement.user_id));
   const payload = buildAchievementNotification({
     username: name,
@@ -100,5 +141,5 @@ export async function announceAchievement(
     achievementId: achievement.achievement_type,
     tier: meta.tier,
   });
-  return announce(admin, 'achievement', achievement.id, achievement.user_id, payload);
+  return announce(admin, 'achievement', achievement.id, achievement.user_id, payload, slotEventId);
 }

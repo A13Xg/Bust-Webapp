@@ -46,6 +46,7 @@ Deno.serve(async req => {
     );
 
     let sentCount = 0;
+    let failedCount = 0;
     let scheduledCount = 0;
     let prunedSubscriptions = 0;
 
@@ -107,18 +108,34 @@ Deno.serve(async req => {
               kind: 'inactivity',
               data: { kind: 'inactivity' },
             },
-            // Outliving one dispatch interval is pointless for a nag.
-            { ttlSeconds: 6 * 60 * 60 }
+            // Outliving one dispatch interval is pointless for a nag. The
+            // reminder is self-addressed, so the user is their own actor.
+            { ttlSeconds: 6 * 60 * 60, actorId: profile.id }
           );
           prunedSubscriptions += result.pruned;
-          if (result.delivered > 0) {
-            // markInactivityReminderSent returns null for a state with no
-            // cycle timestamp, which reconciled cannot be here — keep the
-            // previous state rather than asserting that away.
-            const advanced = markInactivityReminderSent(reconciled, { now, messageIndex: chosen.index });
-            if (advanced) nextState = advanced;
-            sentCount += 1;
-          }
+          // Advance the cycle on any attempt, delivered or not. Leaving a failed
+          // reminder due meant it was retried on every run — every ten minutes —
+          // until bump_push_failure evicted the subscription at 25 strikes, so a
+          // transient push-service outage cost the user push entirely. Skipping
+          // one nag is the cheaper failure.
+          //
+          // Advancing through markInactivityReminderSent is what keeps this
+          // stable: it sets lastSentAt, so the next reconcile takes the
+          // followup-window branch and leaves the new schedule alone. Writing a
+          // bare retry timestamp into scheduledFor instead would be silently
+          // rescheduled back to "now" whenever the slot sat late in its window.
+          //
+          // markInactivityReminderSent returns null for a state with no
+          // cycle timestamp, which reconciled cannot be here — keep the
+          // previous state rather than asserting that away.
+          const advanced = markInactivityReminderSent(reconciled, {
+            now,
+            // A message nobody received must not burn its slot in the rotation.
+            messageIndex: result.delivered > 0 ? chosen.index : reconciled.lastMessageIndex,
+          });
+          if (advanced) nextState = advanced;
+          if (result.delivered > 0) sentCount += 1;
+          else failedCount += 1;
         }
 
         upserts.push({
@@ -141,6 +158,7 @@ Deno.serve(async req => {
     return json(200, {
       ok: true,
       sent: sentCount,
+      undelivered: failedCount,
       usersScheduled: scheduledCount,
       staleSubscriptionsRemoved: prunedSubscriptions,
     });

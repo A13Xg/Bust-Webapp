@@ -8,9 +8,13 @@ which part broke.
 | Event | Who receives it | Path |
 | --- | --- | --- |
 | Someone busts | Everyone except the buster | Web push (instant) + an in-app toast for anyone with the app open |
-| Someone unlocks an achievement | Everyone except that user | Web push |
+| Someone unlocks an achievement | Everyone except that user | Web push, at most one per unlocker per 10 min |
 | No bust for 5-7 days | That user only | Web push, from the scheduled dispatcher |
 | An admin sends a debug broadcast | **Everyone, including the sender** | Web push, on demand from the debug menu |
+
+Every send is logged to `push_deliveries`, one row per recipient device, and the
+service worker acknowledges the ones that arrive. The debug menu's DELIVERY tab
+reads that back as totals plus a per-event log.
 
 Reminder timing is randomized per user inside a 5-7 day window measured from
 their last bust, so the crew is never nagged in lockstep. Any bust resets the
@@ -45,6 +49,86 @@ minutes.
 Chrome and does not exist inside an iOS home-screen web app. Everything goes
 through `ServiceWorkerRegistration.showNotification()`; `src/notifications.js`
 keeps the constructor only as a desktop fallback when no worker is available.
+
+**One bust is worth one achievement push.** A single bust can unlock several
+achievements at once, and re-reconciling mints a whole backlog — 13 in one
+observed sweep, which the crew received as 13 separate notifications. Two
+independent caps stop that, and both are needed:
+
+1. The client announces only `pickAnnounceableUnlock(newlyPersisted)`, the single
+   highest-XP unlock. Note this is *stricter* than `capUnlocksPerBust`, which
+   still lets an achievement and a badge/trophy through for the on-screen toast.
+2. `announceAchievement` claims a per-actor slot id in `push_events` before
+   announcing, and declines when the slot is taken.
+
+The server-side half is not belt-and-braces. Every row the client declines to
+announce is still sitting in `achievements` inside `dispatch-push-backstop`'s
+one-hour lookback, and the backstop would announce every one of them on its next
+run. A client-only cap is silently undone within ten minutes.
+
+**A suppressed announcement is still claimed.** Declining to push a row means
+writing its `push_events` row anyway, with zero recipients — the same thing
+`announceAchievement` does for an achievement id outside the catalog. Skip the
+claim and the backstop re-evaluates that row on every run for the whole lookback
+window, then announces it the moment the cooldown lapses. The cap becomes a
+delay.
+
+**The cooldown gate must be atomic.** `announceToCrew` is fire-and-forget, so a
+client with several new achievements fires several `notify-event` requests
+concurrently. A `select count(*)` check followed by a send is a race every one of
+those callers wins. The gate is a `claimPushEvent` against the unique index on
+`(kind, source_id)` instead, which is the same primitive that makes the ledger
+exactly-once. A slot that is claimed and then fails to send is released along
+with the row's own claim, or one transient failure would silence the whole
+window and lock the backstop out of retrying.
+
+**Busts are exempt from every cap.** A bust is news and must never be dropped as
+collateral. `notify-event`'s 12-per-5-minute ceiling counts only
+`kind = 'achievement'` and is only consulted for achievements; counting every
+kind meant an achievement backlog could exhaust the budget and then throttle that
+account's next real bust. Busts need no ceiling of their own — the
+`enforce_bust_cooldown` trigger already allows one per two hours.
+
+**A failed reminder is not retried.** `dispatch-inactivity-reminders` advances
+the cycle on any attempt, delivered or not. Leaving a failed reminder due meant
+it was re-sent on every run — every ten minutes — until `bump_push_failure`
+evicted the subscription at 25 strikes, so a transient push-service outage cost
+the user push entirely. Losing one nag out of a 5-7 day cycle is the cheaper
+failure. The advance goes through `markInactivityReminderSent` so `lastSentAt` is
+set and the next reconcile takes the follow-up-window branch; writing a bare
+retry timestamp into `scheduledFor` does not work, because
+`reconcileInactivityReminderState` rewrites any value outside the current window
+back to "now" — which would have made the backoff hold for users scheduled early
+in their window and silently fail for those scheduled late.
+
+**"Delivered" from a push service is not delivered.** `webpush.sendNotification`
+resolving means FCM/Mozilla/Apple accepted the message for onward delivery.
+There is no delivery receipt in the web push protocol, so `last_success_at` and
+`DeliveryResult.delivered` both systematically overstate what reached a device.
+The only party that knows is the device: `sw.js` acknowledges each notification
+to `ack-push`, which stamps `push_deliveries.acked_at`, and the debug menu's
+DELIVERY tab reports sent-versus-received per event.
+
+Read a missing acknowledgement as *unconfirmed*, never as undelivered. A device
+that was offline, or whose worker the browser killed before the `fetch` landed,
+shows unconfirmed with the notification sitting on its lock screen.
+
+**`ack-push` is unauthenticated on purpose.** A service worker has no access to
+the page's Supabase session, so there is no JWT to send. The per-delivery
+`receipt_id` carried in the push payload is the entire authorisation: an
+unguessable UUID granting exactly one capability, to set one row's `acked_at`.
+It answers 204 whether or not the id existed, so it cannot be probed for valid
+receipts, and the update is filtered on `acked_at is null` so a replay cannot
+move a timestamp. The acknowledging `fetch` is also fire-and-forget inside a
+`try/catch`: an unhandled rejection there would reject the push event's
+`waitUntil` and cost the user the notification itself.
+
+**The delivery log is written best-effort.** `sendToSubscriptions` inserts into
+`push_deliveries` after the sends resolve, and only logs a failed insert. It is
+observability; it must never turn a delivered notification into a failed
+dispatch. That is also what makes the migration safe to apply after the deploy —
+until the table exists, acks are dropped and the DELIVERY tab reports itself
+unavailable, while push itself is unaffected.
 
 **iOS requires installation.** Safari on iOS exposes `Notification` and
 `PushManager` only inside a PWA launched from the Home Screen (iOS 16.4+). Until
@@ -209,7 +293,14 @@ supabase functions deploy dispatch-inactivity-reminders
 supabase functions deploy broadcast-test-notification
 supabase functions deploy admin-set-password
 supabase functions deploy delete-account
+supabase functions deploy ack-push
+supabase functions deploy push-delivery-report
 ```
+
+`deploy.yml` now deploys every function under `supabase/functions/` on a push to
+`main`, so in practice only `supabase db push` is a manual step — **nothing in CI
+or CD applies `supabase/migrations/`.** `npm run db:migrate` builds the local
+Express dev schema (`server/schema.js`), not this directory.
 
 Repository secrets required by `.github/workflows/notify-cron.yml`:
 

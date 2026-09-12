@@ -208,6 +208,18 @@ export function capUnlocksPerBust(ids = []) {
   return [best(['achievement']), best(['badge', 'trophy'])].filter(Boolean);
 }
 
+/**
+ * The one unlock worth pushing to the crew. `capUnlocksPerBust` still allows an
+ * achievement AND a badge/trophy through for the on-screen toast, but a bust
+ * must never turn into two notifications, so the push path narrows that to the
+ * single highest-XP item. The rest are dropped: threshold conditions simply
+ * re-qualify on a later bust.
+ */
+export function pickAnnounceableUnlock(ids = []) {
+  const items = ids.map(id => achievements.find(a => a.id === id)).filter(Boolean);
+  return items.sort((a, b) => b.points - a.points)[0]?.id ?? null;
+}
+
 export function deriveProgressionSummary(userId, existing = []) {
   const unlockedIds = alreadyUnlocked(existing, userId);
   const tracks = progressionCatalog.map(track => {

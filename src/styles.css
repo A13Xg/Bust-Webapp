@@ -347,6 +347,18 @@ img,svg,canvas{max-width:100%}
 .debug-tabs button:hover{color:var(--ink)}
 .debug-tabs button.active{color:var(--orange);border-color:rgba(255,94,0,.45);background:rgba(255,94,0,.10)}
 .debug-panel{display:grid;gap:14px}
+/* Delivery tab: headline totals plus a running log. Columns are fixed so the
+   sent/received pair stays right-aligned and scannable down the column; the log
+   scrolls inside itself rather than stretching the debug dialog. */
+.delivery-totals{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.delivery-totals .metric{border:1px solid var(--line);background:#09090b;padding:10px;text-align:center}
+.delivery-log{display:grid;gap:1px;max-height:320px;overflow:auto;border:1px solid var(--line);background:var(--line)}
+.delivery-row{display:grid;grid-template-columns:minmax(120px,1.1fr) 78px minmax(70px,.7fr) minmax(120px,2fr) 64px;gap:10px;align-items:center;background:#09090b;padding:9px 11px;font:700 12px Tahoma,sans-serif;color:var(--muted)}
+.delivery-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.delivery-kind{color:var(--orange);text-transform:uppercase;font-weight:900;letter-spacing:1px}
+.delivery-who{color:var(--ink);font-weight:900}
+.delivery-count{text-align:right;color:var(--ink);font-weight:900;font-variant-numeric:tabular-nums}
+@media(max-width:640px){.delivery-row{grid-template-columns:1fr 56px;grid-template-areas:"when count" "what count";row-gap:3px}.delivery-when{grid-area:when}.delivery-what{grid-area:what}.delivery-count{grid-area:count;align-self:center}.delivery-kind,.delivery-who{display:none}}
 .debug-note input{background:#09090b;border:1px solid var(--line);color:var(--ink);padding:11px;font:800 14px Tahoma,sans-serif;outline:0;text-transform:none;letter-spacing:0}
 .debug-note input:focus,.debug-note textarea:focus{border-color:var(--orange)}
 .recipient-picker{display:grid;gap:8px;padding:12px;border:1px solid var(--line);background:#09090b}.recipient-toggle{display:flex;align-items:center;gap:9px;color:var(--ink);font:900 12px Tahoma,sans-serif;letter-spacing:1px;text-transform:uppercase}.recipient-dropdown{position:relative}.recipient-trigger{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;background:#101014;border:1px solid var(--line);color:var(--ink);padding:10px;text-align:left;font:800 14px Tahoma,sans-serif}.recipient-trigger span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.recipient-trigger svg{width:18px;height:18px;flex:none;color:var(--orange)}.recipient-menu{position:absolute;z-index:4;top:calc(100% + 4px);left:0;right:0;display:grid;max-height:180px;overflow:auto;border:1px solid rgba(255,94,0,.5);background:#101014;box-shadow:0 14px 30px rgba(0,0,0,.48)}.recipient-menu button{border:0;border-bottom:1px solid var(--line);background:transparent;color:var(--muted);padding:10px 12px;text-align:left;font:800 13px Tahoma,sans-serif}.recipient-menu button:hover,.recipient-menu button[aria-selected="true"]{background:rgba(255,94,0,.14);color:var(--ink)}.recipient-picker small{color:var(--muted);font-weight:700}.recipient-picker.disabled{opacity:.48}.recipient-picker.disabled input{cursor:not-allowed}

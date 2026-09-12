@@ -13,6 +13,13 @@ import { corsHeaders, json } from '../_shared/push.ts';
 const MAX_EVENT_AGE_MS = 15 * 60 * 1000;
 // The ledger already caps each row at one push, but a client can mint many
 // achievement rows at once by re-reconciling. Cap how loud one account can be.
+//
+// Scoped to achievements on purpose. Counting every kind meant an achievement
+// backlog could exhaust the budget and then throttle that account's next real
+// bust — a bust is news, and it is already capped at one per two hours by the
+// enforce_bust_cooldown trigger, so it never needed this ceiling. Achievements
+// are additionally held to one push per cooldown window by the slot claim in
+// _shared/announce.ts; this stays as the outer bound on a misbehaving client.
 const RATE_WINDOW_MS = 5 * 60 * 1000;
 const RATE_MAX_EVENTS = 12;
 
@@ -21,6 +28,7 @@ async function overRateLimit(admin: SupabaseClient, userId: string) {
   const { count, error } = await admin
     .from('push_events')
     .select('id', { count: 'exact', head: true })
+    .eq('kind', 'achievement')
     .eq('actor_id', userId)
     .gte('created_at', since);
   // Never fail closed on a bookkeeping error — a missed notification is worse
@@ -60,7 +68,10 @@ Deno.serve(async req => {
 
     const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
 
-    if (await overRateLimit(admin, userId)) {
+    // Busts are exempt: the cooldown trigger already bounds them, and a bust is
+    // the one notification that must never be dropped as collateral from an
+    // achievement backlog.
+    if (kind === 'achievement' && (await overRateLimit(admin, userId))) {
       return json(429, { error: 'Too many crew notifications from this account. Try again shortly.' });
     }
 

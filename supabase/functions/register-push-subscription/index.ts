@@ -112,7 +112,7 @@ Deno.serve(async req => {
         tag: `bust-test-${userId}`,
         kind: 'test',
         data: { kind: 'test' },
-      });
+      }, { actorId: userId });
       test = { delivered: result.delivered, attempted: result.attempted, pruned: result.pruned, failures: result.failures };
     }
 

@@ -15,6 +15,7 @@ import { ChevronDown, X } from 'lucide-react';
 import { achievements } from './rules.js';
 import { backend } from './backend.js';
 import { describeTokens, renderBroadcast, unknownTokens } from './broadcastTemplate.js';
+import { summarizeDeliveries } from './pushDeliveryReport.js';
 import { MIcon, matMap } from './badgeIcons.jsx';
 import { Lightbox } from './Lightbox.jsx';
 
@@ -22,6 +23,7 @@ const TABS = [
   { id: 'bust', label: 'BUST' },
   { id: 'progress', label: 'PROGRESS' },
   { id: 'notify', label: 'NOTIFY' },
+  { id: 'delivery', label: 'DELIVERY' },
   { id: 'accounts', label: 'ACCOUNTS' },
   { id: 'tools', label: 'TOOLS' },
   { id: 'session', label: 'SESSION' },
@@ -285,6 +287,89 @@ function NotifyTab({ username, users }) {
   );
 }
 
+/* ------------------------------ Delivery tab ------------------------------ */
+
+/*
+ * What was pushed, and what a device confirmed receiving.
+ *
+ * "Received" counts service-worker acknowledgements (see supabase/functions/
+ * ack-push). It is a floor: an offline device shows unconfirmed even when the
+ * notification is sitting on its lock screen, so a gap here is a prompt to look,
+ * not proof that delivery failed.
+ */
+function DeliveryTab() {
+  const [state, setState] = useState({ status: 'idle', message: '', report: null });
+
+  async function load() {
+    setState({ status: 'loading', message: 'Loading delivery log…', report: null });
+    try {
+      const { deliveries, unavailable } = await backend.pushDeliveryReport();
+      setState({
+        status: 'ready',
+        message: unavailable ? `Delivery log unavailable: ${unavailable}` : '',
+        report: summarizeDeliveries(deliveries),
+      });
+    } catch (error) {
+      setState({ status: 'error', message: String(error?.message || error), report: null });
+    }
+  }
+
+  const report = state.report;
+  return (
+    <div className="debug-panel">
+      <p className="showcase-hint">
+        Sent counts what a push service accepted. Received counts devices that acknowledged the notification — an
+        offline device stays unconfirmed, so treat a gap as unknown rather than as a failure.
+      </p>
+      <div className="picker-actions">
+        <button className="mf-button ghost" disabled={state.status === 'loading'} onClick={load}>
+          {report ? 'REFRESH LOG' : 'LOAD LOG'}
+        </button>
+      </div>
+      {state.message && <p className="showcase-hint">{state.message}</p>}
+      {report && (
+        <>
+          <div className="delivery-totals">
+            <div className="metric">
+              <small>SENT</small>
+              <strong>{report.totals.sent}</strong>
+            </div>
+            <div className="metric">
+              <small>RECEIVED</small>
+              <strong>{report.totals.received}</strong>
+            </div>
+            <div className="metric">
+              <small>CONFIRMED</small>
+              <strong>
+                {report.totals.sent ? Math.round((report.totals.received / report.totals.sent) * 100) : 0}%
+              </strong>
+            </div>
+          </div>
+          {report.events.length === 0 ? (
+            <p className="showcase-hint">No deliveries logged yet.</p>
+          ) : (
+            <div className="delivery-log">
+              {report.events.map(event => (
+                <div key={event.batchId} className="delivery-row">
+                  <span className="delivery-when">{new Date(event.sentAt).toLocaleString()}</span>
+                  <span className="delivery-kind">{event.kind}</span>
+                  <span className="delivery-who">{event.actorName}</span>
+                  <span className="delivery-what" title={event.recipients.map(r => r.name).join(', ')}>
+                    {event.title || '—'}
+                  </span>
+                  <span className="delivery-count">
+                    {event.sent} / {event.received}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 /* -------------------------------- Tools tab ------------------------------- */
 
 function ToolsTab({ logoSrc }) {
@@ -527,6 +612,7 @@ export function DebugMenu({ debug, username, users, logoSrc, onClose }) {
         )}
 
         {tab === 'notify' && <NotifyTab username={username} users={users} />}
+        {tab === 'delivery' && <DeliveryTab />}
         {tab === 'accounts' && <AccountsTab users={users} />}
         {tab === 'tools' && <ToolsTab logoSrc={logoSrc} />}
 

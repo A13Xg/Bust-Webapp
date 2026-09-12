@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Bell, Bitcoin, ChevronUp, Gauge, LogOut, MapPin, Medal, Mountain, Pencil, Repeat2, Sparkles, Thermometer, Trophy, Volume2, VolumeX, Waves, X } from 'lucide-react';
 import 'material-symbols/outlined.css';
 import './styles.css';
-import { achievements, capUnlocksPerBust, computeAchievementUnlocks, deriveAllTimeRecords, derivePersonalStats, deriveStreaks, buildTrend, finiteNumber, levelForXp, timeBucket, twoHoursRemainingMs, todayKey } from './rules.js';
+import { achievements, capUnlocksPerBust, pickAnnounceableUnlock, computeAchievementUnlocks, deriveAllTimeRecords, derivePersonalStats, deriveStreaks, buildTrend, finiteNumber, levelForXp, timeBucket, twoHoursRemainingMs, todayKey } from './rules.js';
 import { expansionItems } from './expansion.js';
 import { TrendChart, DonutChart, HourHistogram, PriceLine, Sparkline, ScatterChart, HBarChart } from './charts.jsx';
 import { backend } from './backend.js';
@@ -369,12 +369,15 @@ function Dashboard({user,setUser,initialShowPerms}){ const [showPerms,setShowPer
     setUnlocks(allAchievements);
     const after = userAchievementSet(allAchievements);
     const newlyPersisted = allNew.filter(id => after.has(id) && !before.has(id));
-    // Tell the crew about each freshly minted badge. The ledger in push_events
-    // makes a repeat reconciliation a no-op rather than a second round of pings.
-    const newTypes = new Set(newlyPersisted);
-    for (const row of allAchievements) {
-      if (row.user_id === user.id && newTypes.has(row.achievement_type)) announceToCrew('achievement', row.id);
-    }
+    // One bust is worth at most one achievement push, however many it unlocked.
+    // The toast below still shows the per-bust cap's full pair; the crew gets a
+    // single announcement. dispatch-push-backstop enforces the same cap for the
+    // rows skipped here, which it would otherwise sweep up and announce.
+    const announceable = pickAnnounceableUnlock(newlyPersisted);
+    const announceRow = announceable
+      ? allAchievements.find(row => row.user_id === user.id && row.achievement_type === announceable)
+      : null;
+    if (announceRow) announceToCrew('achievement', announceRow.id);
     const displayItems = capUnlocksPerBust(newlyPersisted).map(id => achievements.find(a => a.id === id)).filter(Boolean);
     if (displayItems.length) {
       enqueueBadge(displayItems);

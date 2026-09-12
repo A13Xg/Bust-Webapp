@@ -30,7 +30,7 @@ Deno.serve(async req => {
   try {
     const gate = await requireAdmin(req, json);
     if (gate.denied) return gate.denied;
-    const { admin, senderName } = gate.context;
+    const { admin, senderId, senderName } = gate.context;
 
     const payload = await req.json().catch(() => ({}));
     const titleTemplate = String(payload?.title ?? '').slice(0, TITLE_MAX);
@@ -70,7 +70,7 @@ Deno.serve(async req => {
         kind: 'broadcast',
         data: { kind: 'broadcast', sourceId: tag },
       };
-    });
+    }, { actorId: senderId });
 
     console.log('[broadcast] sent by', senderName, JSON.stringify(result));
     return json(200, { ok: true, crew: recipientIds.length, ...result });

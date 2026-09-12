@@ -79,31 +79,60 @@ export async function sendToSubscriptions(
   // A function instead of a payload renders per recipient, which is what lets a
   // broadcast address each person by their own name in one pass.
   payload: PushPayload | ((subscription: PushSubscriptionRow) => PushPayload),
-  { ttlSeconds = 60 * 60 * 12 }: { ttlSeconds?: number } = {}
+  { ttlSeconds = 60 * 60 * 12, actorId = null }: { ttlSeconds?: number; actorId?: string | null } = {}
 ): Promise<DeliveryResult> {
   configureVapid();
   const perSubscription = typeof payload === 'function' ? payload : null;
-  // `?? {}` matters: JSON.stringify(undefined) is undefined, which would fall
-  // through the ?? below into perSubscription!(sub) with perSubscription null.
-  const sharedBody = perSubscription ? null : JSON.stringify(payload ?? {});
+  // `?? {}` matters: without it a nullish payload would fall through the `??`
+  // below into perSubscription!(sub) with perSubscription null. An empty object
+  // is falsy-safe here because `??` only bridges null/undefined.
+  const sharedPayload = perSubscription ? null : ((payload ?? {}) as PushPayload);
   const result: DeliveryResult = { attempted: subscriptions.length, delivered: 0, pruned: 0, failures: [] };
   const nowIso = new Date().toISOString();
 
+  // Every delivery in this fan-out shares a batch id so the report can group
+  // them back into one event; each carries its own receipt id, which is what the
+  // service worker sends back to prove the notification actually arrived.
+  const batchId = crypto.randomUUID();
+  const ackUrl = `${Deno.env.get('SUPABASE_URL') || ''}/functions/v1/ack-push`;
+
   const outcomes = await Promise.all(
     subscriptions.map(async sub => {
+      const receiptId = crypto.randomUUID();
+      const base = sharedPayload ?? perSubscription!(sub);
+      const body = JSON.stringify({ ...base, data: { ...(base.data || {}), receiptId, ackUrl } });
       try {
         await webpush.sendNotification(
           { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-          sharedBody ?? JSON.stringify(perSubscription!(sub)),
+          body,
           // "high" urgency keeps iOS from batching crew alerts into oblivion.
           { TTL: ttlSeconds, urgency: 'high' }
         );
-        return { sub, ok: true as const };
+        return { sub, ok: true as const, receiptId, title: base.title || '', kind: base.kind || 'push' };
       } catch (error) {
         return { sub, ok: false as const, error };
       }
     })
   );
+
+  // Log what the push services accepted. Best-effort on purpose: this is
+  // observability, and a missing table or a failed insert must never turn a
+  // delivered notification into a failed dispatch.
+  const accepted = outcomes.filter(outcome => outcome.ok);
+  if (accepted.length) {
+    const { error } = await admin.from('push_deliveries').insert(
+      accepted.map(outcome => ({
+        receipt_id: outcome.receiptId,
+        batch_id: batchId,
+        kind: outcome.kind,
+        actor_id: actorId,
+        recipient_id: outcome.sub.user_id,
+        title: outcome.title,
+        sent_at: nowIso,
+      }))
+    );
+    if (error) console.error('[push] delivery log insert failed', error.message);
+  }
 
   const deliveredIds: number[] = [];
   const goneIds: number[] = [];

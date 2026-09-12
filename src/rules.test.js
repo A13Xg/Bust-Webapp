@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { achievements, capUnlocksPerBust, progressionCatalog, timeBucket, twoHoursRemainingMs, computeAchievementUnlocks, computeProgressionUnlocks, deriveProgressionSummary, deriveAllTimeRecords, deriveStreaks, finiteNumber, levelForXp, derivePersonalStats, buildTrend, todayKey } from './rules.js';
+import { achievements, capUnlocksPerBust, pickAnnounceableUnlock, progressionCatalog, timeBucket, twoHoursRemainingMs, computeAchievementUnlocks, computeProgressionUnlocks, deriveProgressionSummary, deriveAllTimeRecords, deriveStreaks, finiteNumber, levelForXp, derivePersonalStats, buildTrend, todayKey } from './rules.js';
 
 describe('BUST rules', () => {
   it('labels time-of-day buckets', () => {
@@ -253,6 +253,27 @@ describe('BUST rules', () => {
     const top = achIds.sort((a, b) => (achievements.find(x => x.id === b).points) - (achievements.find(x => x.id === a).points))[0];
     expect(capped).toContain(top);
     expect(capUnlocksPerBust([])).toEqual([]);
+  });
+
+  it('pickAnnounceableUnlock returns the single highest-XP unlock across all kinds', () => {
+    const bust = { id: 'b1', user_id: 'u1', timestamp: new Date(2026, 0, 1, 6).toISOString(), temp_f: 91, pressure: 1025, note: 'a very detailed field report from the bay', lat: 1, long: 2 };
+    const raw = computeAchievementUnlocks('u1', [bust], []);
+    expect(raw.length).toBeGreaterThan(2);
+    const best = raw
+      .map(id => achievements.find(a => a.id === id))
+      .filter(Boolean)
+      .sort((a, b) => b.points - a.points)[0].id;
+    expect(pickAnnounceableUnlock(raw)).toBe(best);
+  });
+
+  it('pickAnnounceableUnlock returns null when nothing was unlocked', () => {
+    expect(pickAnnounceableUnlock([])).toBeNull();
+    expect(pickAnnounceableUnlock()).toBeNull();
+  });
+
+  it('pickAnnounceableUnlock ignores ids outside the catalog', () => {
+    expect(pickAnnounceableUnlock(['not_a_real_achievement'])).toBeNull();
+    expect(pickAnnounceableUnlock(['not_a_real_achievement', 'first_release'])).toBe('first_release');
   });
 
   // ──────────────────────────────────────────────────────────────────────────

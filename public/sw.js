@@ -63,17 +63,49 @@ function buildNotification(payload) {
   ];
 }
 
+/*
+ * Confirm a notification actually reached this device.
+ *
+ * Web push gives the server no delivery receipt — it only learns that a push
+ * service accepted the message — so this is the only signal that says "it
+ * landed". Both the receipt id and the URL ride in the payload because a worker
+ * has neither the page's Supabase session nor its build-time config.
+ *
+ * Never allowed to throw: an unhandled rejection here would reject the push
+ * event's waitUntil and cost the user the notification itself.
+ */
+async function acknowledgeDelivery(payload) {
+  const receiptId = payload?.data?.receiptId;
+  const ackUrl = payload?.data?.ackUrl;
+  if (!receiptId || !ackUrl) return;
+  try {
+    await fetch(ackUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ receiptId }),
+    });
+  } catch {
+    // Offline, or the endpoint is unreachable. The delivery simply stays
+    // unconfirmed; "not acked" means unconfirmed, never undelivered.
+  }
+}
+
 self.addEventListener('push', event => {
   const payload = parsePushPayload(event);
   const [title, options] = buildNotification(payload);
   event.waitUntil(
     (async () => {
+      // Show first, acknowledge second: the user-visible part must not wait on
+      // the network, and browsers terminate a worker that takes too long.
       await self.registration.showNotification(title, options);
       // Let any open tab react (bump the unread badge, refresh the feed).
       const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
       for (const client of clients) {
         client.postMessage({ type: 'bust-push', payload });
       }
+      // Last, and awaited only to keep the worker alive for it: a slow or
+      // hanging network must not delay anything the user can see.
+      await acknowledgeDelivery(payload);
     })()
   );
 });
