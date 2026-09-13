@@ -56,12 +56,37 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: latest
+
+      # Migrations BEFORE functions, and both before the Pages build.
+      #
+      # This step did not exist until 2026-09-13, and nothing else applied
+      # supabase/migrations/ — so a migration only ever reached production if
+      # someone remembered to run `supabase db push` by hand. One did not:
+      # push_deliveries was missing in production for a day while the deployed
+      # ack-push and push-delivery-report functions referenced it, which silently
+      # disabled every delivery acknowledgement.
+      #
+      # Ordering matters. A function deployed against a column that does not
+      # exist yet fails at runtime, not at deploy time, so the schema has to lead.
+      - name: Apply Supabase migrations
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_REF: yuorggekucycvxrtqvvp
+        run: |
+          test -n "$SUPABASE_ACCESS_TOKEN" || { echo "::error::SUPABASE_ACCESS_TOKEN is not set"; exit 1; }
+          # SUPABASE_DB_PASSWORD is optional: with an access token the CLI
+          # provisions a temporary login role over the Management API and needs
+          # no password. It is honoured when present so the workflow still works
+          # on a project where that path is unavailable.
+          supabase link --project-ref "$SUPABASE_PROJECT_REF"
+          supabase db push --linked --yes
+
       - name: Deploy Supabase Edge Functions
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_REF: yuorggekucycvxrtqvvp
         run: |
-          test -n "$SUPABASE_ACCESS_TOKEN" || { echo "::error::SUPABASE_ACCESS_TOKEN is not set"; exit 1; }
           for function_dir in supabase/functions/*; do
             test -f "$function_dir/index.ts" || continue
             supabase functions deploy "$(basename "$function_dir")" --project-ref "$SUPABASE_PROJECT_REF"
