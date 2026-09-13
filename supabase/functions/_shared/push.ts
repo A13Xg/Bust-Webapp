@@ -118,6 +118,11 @@ export async function sendToSubscriptions(
   // Log what the push services accepted. Best-effort on purpose: this is
   // observability, and a missing table or a failed insert must never turn a
   // delivered notification into a failed dispatch.
+  //
+  // `subscription_id` is what makes the log usable for liveness rather than just
+  // for reading: an ack proves one ENDPOINT is alive, and a user has several.
+  // Without it a confirmed delivery to a working laptop would vouch for a dead
+  // phone on the same account.
   const accepted = outcomes.filter(outcome => outcome.ok);
   if (accepted.length) {
     const { error } = await admin.from('push_deliveries').insert(
@@ -126,6 +131,7 @@ export async function sendToSubscriptions(
         batch_id: batchId,
         kind: outcome.kind,
         actor_id: actorId,
+        subscription_id: outcome.sub.id,
         recipient_id: outcome.sub.user_id,
         title: outcome.title,
         sent_at: nowIso,
@@ -156,6 +162,13 @@ export async function sendToSubscriptions(
       .from('push_subscriptions')
       .update({ last_success_at: nowIso, failure_count: 0, updated_at: nowIso })
       .in('id', deliveredIds);
+    // Acceptance is not delivery, so this advances the "sent but unconfirmed"
+    // counter rather than any success field. record_push_ack clears it when the
+    // device actually renders the notification. An endpoint whose counter only
+    // ever climbs is one Apple accepts and silently discards — the failure mode
+    // that cost this app iOS push, and the only one that leaves no other trace.
+    const { error } = await admin.rpc('mark_push_sent', { subscription_ids: deliveredIds });
+    if (error) console.error('[push] liveness bookkeeping failed', error.message);
   }
   if (goneIds.length) {
     await admin.from('push_subscriptions').delete().in('id', goneIds);

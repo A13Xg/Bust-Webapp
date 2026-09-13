@@ -257,11 +257,17 @@ export async function subscribeToWebPush({
   serviceWorkerRegistration,
   vapidPublicKey,
   userVisibleOnly = true,
+  // Discard the cached subscription even when it looks valid. The only caller
+  // that sets this is the rotation path below, which has server-side evidence
+  // that the endpoint is deaf.
+  forceRotate = false,
 } = {}) {
   if (!serviceWorkerRegistration?.pushManager) return null;
   const existing = await serviceWorkerRegistration.pushManager.getSubscription();
   if (existing) {
-    if (!subscriptionKeyMismatch(existing, vapidPublicKey)) return toSerializablePushSubscription(existing);
+    if (!forceRotate && !subscriptionKeyMismatch(existing, vapidPublicKey)) {
+      return toSerializablePushSubscription(existing);
+    }
     try {
       await existing.unsubscribe();
     } catch {}
@@ -274,8 +280,87 @@ export async function subscribeToWebPush({
   return toSerializablePushSubscription(subscription);
 }
 
+/*
+ * How many consecutive accepted-but-unacknowledged pushes mean the endpoint is
+ * dead rather than merely offline.
+ *
+ * A device that is simply asleep or out of signal acknowledges as soon as it
+ * comes back, so the counter resets on its own. Only an endpoint the push
+ * service keeps accepting while nothing ever renders climbs without bound. Six
+ * is comfortably past normal churn for a crew this size and still recovers
+ * within a day or two of real traffic.
+ */
+export const ROTATE_AFTER_UNACKED = 6;
+
+/**
+ * Whether a stored endpoint should be thrown away and re-minted.
+ *
+ * This exists because neither end can see the failure any other way. Apple
+ * invalidates a Web Push subscription silently: APNs answers 201 forever, so
+ * there is no 404/410 for the server to prune on, and the browser still returns
+ * a PushSubscription whose VAPID key matches, so `subscriptionKeyMismatch` is
+ * false and the app happily re-registers the same dead endpoint on every launch.
+ * Acknowledgements are the only remaining signal.
+ *
+ * Requires `lastAckAt` to be null: an endpoint that has ever acknowledged one
+ * push has proved the whole chain works, so a later run of unacked sends is far
+ * more likely to be a device that is off than one that is dead. Those are left
+ * to the server's much more conservative prune.
+ *
+ * @param {{ unackedCount?: number, lastAckAt?: string|null }|null|undefined} health
+ * @returns {boolean}
+ */
+export function shouldRotateEndpoint(health) {
+  if (!health) return false;
+  if (health.lastAckAt) return false;
+  return Number(health.unackedCount || 0) >= ROTATE_AFTER_UNACKED;
+}
+
 function result(reason, extra = {}) {
   return { ok: reason === PUSH_REASON.OK, reason, message: PUSH_REASON_MESSAGE[reason] || reason, ...extra };
+}
+
+/**
+ * Throw this device's push endpoint away and mint a new one, unconditionally.
+ *
+ * The automatic path in `enablePushNotifications` only rotates once the server
+ * reports enough unacknowledged sends to be sure. This is the manual override
+ * behind the debug menu, for the case where you already know the endpoint is
+ * dead and would rather not wait for the evidence to accumulate.
+ *
+ * @returns {Promise<{ok: boolean, reason?: string, endpoint?: string, previousEndpoint?: string|null}>}
+ */
+export async function rotatePushEndpoint({ backend, workerPath = '/sw.js', nav = globalThis.navigator, win = globalThis } = {}) {
+  const platform = detectPushPlatform(nav, win);
+  const blocked = pushBlockedReason(platform);
+  if (blocked) return { ok: false, reason: blocked };
+  if (getNotificationPermission(win?.Notification) !== 'granted') {
+    return { ok: false, reason: PUSH_REASON.PERMISSION_DENIED };
+  }
+  const registration = await readyPushServiceWorker(nav, workerPath);
+  if (!registration) return { ok: false, reason: PUSH_REASON.NO_SERVICE_WORKER };
+  const vapidPublicKey = backend?.webPushPublicKey?.() || '';
+  if (!vapidPublicKey) return { ok: false, reason: PUSH_REASON.NO_VAPID_KEY };
+
+  const previous = await registration.pushManager.getSubscription();
+  const previousEndpoint = previous?.endpoint || null;
+  let fresh = null;
+  try {
+    fresh = await subscribeToWebPush({ serviceWorkerRegistration: registration, vapidPublicKey, forceRotate: true });
+  } catch (error) {
+    return { ok: false, reason: PUSH_REASON.SUBSCRIBE_FAILED, detail: String(error?.message || error) };
+  }
+  if (!fresh) return { ok: false, reason: PUSH_REASON.SUBSCRIBE_FAILED };
+
+  try {
+    const server = await backend?.registerPushSubscription?.(fresh, {
+      userAgent: nav?.userAgent || null,
+      replacesEndpoint: previousEndpoint,
+    });
+    return { ok: true, endpoint: fresh.endpoint, previousEndpoint, server };
+  } catch (error) {
+    return { ok: false, reason: PUSH_REASON.REGISTER_FAILED, detail: String(error?.message || error) };
+  }
 }
 
 /**
@@ -324,5 +409,45 @@ export async function enablePushNotifications({
   } catch (error) {
     return result(PUSH_REASON.REGISTER_FAILED, { permission, platform, detail: String(error?.message || error) });
   }
-  return result(PUSH_REASON.OK, { permission, platform, endpoint: subscription.endpoint, subscription, server });
+
+  // Self-heal a silently-dead endpoint. The server has just told us how many
+  // pushes it accepted for this endpoint that the device never acknowledged;
+  // past the threshold, the subscription is a ghost and re-registering it (which
+  // is what every previous launch did) changes nothing. Mint a fresh one and
+  // tell the server to drop the old row so it stops being sent to.
+  //
+  // Once only: if the replacement is somehow also unhealthy that is a different
+  // problem, and a rotate loop would burn a new endpoint on every launch.
+  let rotated = false;
+  if (shouldRotateEndpoint(server?.health)) {
+    const previousEndpoint = subscription.endpoint;
+    try {
+      const fresh = await subscribeToWebPush({
+        serviceWorkerRegistration: registration,
+        vapidPublicKey,
+        forceRotate: true,
+      });
+      if (fresh && fresh.endpoint !== previousEndpoint) {
+        server = await backend?.registerPushSubscription?.(fresh, {
+          userAgent: nav?.userAgent || null,
+          replacesEndpoint: previousEndpoint,
+        });
+        subscription = fresh;
+        rotated = true;
+      }
+    } catch (error) {
+      // A failed rotation leaves the old subscription in place, which is no
+      // worse than not trying. The next launch attempts it again.
+      console.warn('[push] endpoint rotation failed', error?.message || error);
+    }
+  }
+
+  return result(PUSH_REASON.OK, {
+    permission,
+    platform,
+    endpoint: subscription.endpoint,
+    subscription,
+    server,
+    rotated,
+  });
 }

@@ -39,12 +39,13 @@ Deno.serve(async req => {
     if (!UUID_RE.test(receiptId)) return noContent();
 
     const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
-    const { error } = await admin
-      .from('push_deliveries')
-      .update({ acked_at: new Date().toISOString() })
-      .eq('receipt_id', receiptId)
-      .is('acked_at', null);
-    if (error) console.error('[ack-push] update failed', error.message);
+    // One RPC rather than an update, because an ack does two things that must
+    // not drift apart: it stamps the delivery, and it credits the ENDPOINT that
+    // carried it as alive. record_push_ack applies the `acked_at is null` replay
+    // guard inside the same statement, so a replayed receipt neither moves the
+    // timestamp nor resets a liveness counter.
+    const { error } = await admin.rpc('record_push_ack', { receipt: receiptId });
+    if (error) console.error('[ack-push] record failed', error.message);
 
     return noContent();
   } catch (error) {

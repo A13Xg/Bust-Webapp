@@ -6,6 +6,8 @@
  *   - iOS exposing no push APIs until the app is installed to the Home Screen
  *   - a rotated VAPID key silently invalidating an existing subscription
  *   - the arming flow reporting success when nothing was actually stored
+ *   - Apple invalidating an endpoint while still answering 201, which is
+ *     invisible to every other check and needs the acknowledgement signal
  */
 import { describe, it, expect, vi } from 'vitest';
 
@@ -16,8 +18,11 @@ import {
   pushBlockedReason,
   PUSH_REASON,
   showNotification,
+  ROTATE_AFTER_UNACKED,
+  shouldRotateEndpoint,
   subscribeToWebPush,
   subscriptionKeyMismatch,
+  toSerializablePushSubscription,
   uint8ArrayToBase64Url,
 } from './notifications.js';
 
@@ -173,6 +178,22 @@ describe('subscription rotation', () => {
     expect(subscriptionKeyMismatch({ options: { applicationServerKey: null } }, keyB64)).toBe(true);
   });
 
+  it('reuses a healthy subscription instead of minting a new one', () => {
+    const existing = { toJSON: () => ({ endpoint: 'https://push.existing', keys: { p256dh: 'a', auth: 'b' } }) };
+    expect(toSerializablePushSubscription(existing)).toEqual({
+      endpoint: 'https://push.existing',
+      keys: { p256dh: 'a', auth: 'b' },
+    });
+  });
+
+  // A subscription missing key material cannot be encrypted to. Returning it
+  // anyway would store a row that fails on every send with no obvious cause.
+  it('refuses to serialize a subscription with incomplete key material', () => {
+    expect(toSerializablePushSubscription({ toJSON: () => ({ endpoint: 'x', keys: { p256dh: 'k1' } }) })).toBeNull();
+    expect(toSerializablePushSubscription({ toJSON: () => ({ keys: { p256dh: 'a', auth: 'b' } }) })).toBeNull();
+    expect(toSerializablePushSubscription(null)).toBeNull();
+  });
+
   it('resubscribes when the stored key no longer matches the build', async () => {
     const unsubscribe = vi.fn(async () => true);
     const stale = { options: { applicationServerKey: Uint8Array.from([9, 9, 9]).buffer }, unsubscribe };
@@ -273,5 +294,115 @@ describe('arming push end to end', () => {
     });
     expect(outcome).toMatchObject({ ok: false, reason: PUSH_REASON.IOS_NEEDS_INSTALL });
     expect(backend.registerPushSubscription).not.toHaveBeenCalled();
+  });
+});
+
+/*
+ * The failure that cost this app iOS push entirely.
+ *
+ * Apple stops delivering to an invalidated Web Push endpoint but keeps
+ * answering 201, so no 404/410 ever reaches the server. The browser is no help
+ * either: getSubscription() still returns a PushSubscription whose VAPID key
+ * matches, so subscriptionKeyMismatch() says "fine" and every launch
+ * re-registers the same dead endpoint. Acknowledgements are the only evidence.
+ */
+describe('dead endpoint detection', () => {
+  it('rotates once enough sends go unacknowledged', () => {
+    expect(shouldRotateEndpoint({ unackedCount: ROTATE_AFTER_UNACKED, lastAckAt: null })).toBe(true);
+  });
+
+  it('holds below the threshold', () => {
+    expect(shouldRotateEndpoint({ unackedCount: ROTATE_AFTER_UNACKED - 1, lastAckAt: null })).toBe(false);
+  });
+
+  // An endpoint that ever acknowledged has proved the whole chain works, so a
+  // later run of silence is far more likely a device that is off than one that
+  // is dead. Those are left to the server's much more conservative prune.
+  it('never rotates an endpoint that has confirmed a delivery before', () => {
+    expect(shouldRotateEndpoint({ unackedCount: 99, lastAckAt: '2026-09-13T00:00:00Z' })).toBe(false);
+  });
+
+  it('does nothing without health data', () => {
+    expect(shouldRotateEndpoint(null)).toBe(false);
+    expect(shouldRotateEndpoint(undefined)).toBe(false);
+    expect(shouldRotateEndpoint({})).toBe(false);
+  });
+
+  it('discards a valid-looking subscription when forced', async () => {
+    const unsubscribe = vi.fn(async () => true);
+    const keyB64 = uint8ArrayToBase64Url(Uint8Array.from([1, 2, 3, 4]));
+    // Same key as the build: every other check would keep this subscription.
+    const ghost = { options: { applicationServerKey: Uint8Array.from([1, 2, 3, 4]).buffer }, unsubscribe };
+    const fresh = { toJSON: () => ({ endpoint: 'https://push.fresh', keys: { p256dh: 'a', auth: 'b' } }) };
+    const registration = {
+      pushManager: { getSubscription: vi.fn(async () => ghost), subscribe: vi.fn(async () => fresh) },
+    };
+
+    await expect(
+      subscribeToWebPush({ serviceWorkerRegistration: registration, vapidPublicKey: keyB64, forceRotate: true })
+    ).resolves.toEqual({ endpoint: 'https://push.fresh', keys: { p256dh: 'a', auth: 'b' } });
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-registers a fresh endpoint and names the one it replaces', async () => {
+    const keyB64 = uint8ArrayToBase64Url(Uint8Array.from([1, 2, 3, 4]));
+    const dead = { toJSON: () => ({ endpoint: 'https://push.dead', keys: { p256dh: 'a', auth: 'b' } }) };
+    const fresh = { toJSON: () => ({ endpoint: 'https://push.fresh', keys: { p256dh: 'c', auth: 'd' } }) };
+    let handedOut = 0;
+    const registration = {
+      active: {},
+      update: vi.fn(async () => {}),
+      pushManager: {
+        getSubscription: vi.fn(async () => (handedOut === 0 ? null : { unsubscribe: vi.fn(async () => true) })),
+        subscribe: vi.fn(async () => (handedOut++ === 0 ? dead : fresh)),
+      },
+    };
+    const registerPushSubscription = vi
+      .fn()
+      // First call: server reports the endpoint has never been acknowledged.
+      .mockResolvedValueOnce({ ok: true, health: { unackedCount: ROTATE_AFTER_UNACKED, lastAckAt: null } })
+      .mockResolvedValueOnce({ ok: true, health: { unackedCount: 0, lastAckAt: null } });
+
+    const outcome = await enablePushNotifications({
+      backend: { webPushPublicKey: () => keyB64, registerPushSubscription },
+      interactive: false,
+      nav: {
+        serviceWorker: { register: vi.fn(async () => registration), getRegistration: vi.fn(async () => registration) },
+        userAgent: 'test',
+      },
+      win: { Notification: makeNotificationApi({ permission: 'granted' }), PushManager: function () {} },
+    });
+
+    expect(outcome.ok).toBe(true);
+    expect(outcome.rotated).toBe(true);
+    expect(outcome.endpoint).toBe('https://push.fresh');
+    expect(registerPushSubscription).toHaveBeenCalledTimes(2);
+    // The server needs the old endpoint by name, or the ghost row survives and
+    // keeps being sent to.
+    expect(registerPushSubscription.mock.calls[1][1]).toMatchObject({ replacesEndpoint: 'https://push.dead' });
+  });
+
+  it('leaves a healthy endpoint alone', async () => {
+    const keyB64 = uint8ArrayToBase64Url(Uint8Array.from([1, 2, 3, 4]));
+    const live = { toJSON: () => ({ endpoint: 'https://push.live', keys: { p256dh: 'a', auth: 'b' } }) };
+    const registration = {
+      active: {},
+      update: vi.fn(async () => {}),
+      pushManager: { getSubscription: vi.fn(async () => null), subscribe: vi.fn(async () => live) },
+    };
+    const registerPushSubscription = vi.fn(async () => ({ ok: true, health: { unackedCount: 1, lastAckAt: null } }));
+
+    const outcome = await enablePushNotifications({
+      backend: { webPushPublicKey: () => keyB64, registerPushSubscription },
+      interactive: false,
+      nav: {
+        serviceWorker: { register: vi.fn(async () => registration), getRegistration: vi.fn(async () => registration) },
+        userAgent: 'test',
+      },
+      win: { Notification: makeNotificationApi({ permission: 'granted' }), PushManager: function () {} },
+    });
+
+    expect(outcome.rotated).toBe(false);
+    expect(registerPushSubscription).toHaveBeenCalledTimes(1);
   });
 });

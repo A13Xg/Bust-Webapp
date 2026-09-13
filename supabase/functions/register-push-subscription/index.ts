@@ -60,6 +60,19 @@ Deno.serve(async req => {
     );
     if (upsertError) throw new Error(upsertError.message);
 
+    // The client rotated away from a deaf endpoint and is telling us which one.
+    // Scoped to this user so a caller cannot evict someone else's device, and
+    // guarded against deleting the row we just wrote if the two ever match.
+    const replaces = typeof payload?.replacesEndpoint === 'string' ? payload.replacesEndpoint : '';
+    if (replaces && replaces !== endpoint) {
+      const { error: replaceError } = await admin
+        .from('push_subscriptions')
+        .delete()
+        .eq('endpoint', replaces)
+        .eq('user_id', userId);
+      if (replaceError) console.error('[register-push-subscription] rotation cleanup failed', replaceError.message);
+    }
+
     // Keep the reminder cycle in sync so a newly armed device is not immediately
     // nagged (or skipped) because its schedule was never initialised.
     const [profileResult, reminderStateResult] = await Promise.all([
@@ -98,8 +111,31 @@ Deno.serve(async req => {
       if (stateError) throw new Error(stateError.message);
     }
 
+    // Endpoint liveness, so the client can tell a working subscription from one
+    // the push service accepts and silently discards. Apple does exactly that
+    // with an invalidated Web Push endpoint — 201 forever, nothing rendered —
+    // and neither a 410 nor a VAPID-key mismatch ever appears. Consecutive
+    // unacked sends are the only evidence, so it is the client's cue to rotate.
+    const { data: healthRow } = await admin
+      .from('push_subscriptions')
+      .select('id,created_at,last_success_at,last_ack_at,unacked_count,failure_count')
+      .eq('endpoint', endpoint)
+      .maybeSingle();
+    const health = healthRow
+      ? {
+          subscriptionId: healthRow.id,
+          createdAt: healthRow.created_at,
+          lastSuccessAt: healthRow.last_success_at,
+          lastAckAt: healthRow.last_ack_at,
+          unackedCount: healthRow.unacked_count ?? 0,
+          failureCount: healthRow.failure_count ?? 0,
+        }
+      : null;
+
     let test = null;
     if (payload?.sendTest === true) {
+      // Scoped to this endpoint and this user: a test ping is a diagnostic for
+      // the device that asked for it and must never fan out to the crew.
       const { data: stored, error: storedError } = await admin
         .from('push_subscriptions')
         .select('id,user_id,endpoint,p256dh,auth')
@@ -116,7 +152,7 @@ Deno.serve(async req => {
       test = { delivered: result.delivered, attempted: result.attempted, pruned: result.pruned, failures: result.failures };
     }
 
-    return json(200, { ok: true, endpoint, test });
+    return json(200, { ok: true, endpoint, test, health });
   } catch (error) {
     console.error('[register-push-subscription]', error);
     return json(500, { error: error instanceof Error ? error.message : 'Push registration failed' });

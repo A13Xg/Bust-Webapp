@@ -81,7 +81,20 @@ Deno.serve(async req => {
       }
     }
 
-    return json(200, { ok: true, ...summary });
+    // Housekeeping on the same schedule, because there is nowhere better for it
+    // and it is a single indexed delete over a tiny table.
+    //
+    // Apple accepts pushes to an endpoint it has already invalidated — 201, not
+    // 410 — so isGoneError never fires and bump_push_failure never records a
+    // strike. Those rows would otherwise accumulate forever, inflating every
+    // recipients/delivered count and multiplying each burst across a device's
+    // ghost endpoints. Unacknowledged sends are the only evidence they are dead;
+    // prune_dead_push_subscriptions is deliberately conservative about acting on
+    // it (see the migration).
+    const { data: prunedDead, error: pruneError } = await admin.rpc('prune_dead_push_subscriptions');
+    if (pruneError) console.error('[dispatch-push-backstop] prune failed', pruneError.message);
+
+    return json(200, { ok: true, ...summary, prunedDead: Number(prunedDead ?? 0) });
   } catch (error) {
     console.error('[dispatch-push-backstop]', error);
     return json(500, { error: error instanceof Error ? error.message : 'Backstop dispatch failed' });
