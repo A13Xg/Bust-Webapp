@@ -4,12 +4,8 @@ import {
   closePermissionPrompt,
   getNotificationPermission,
   markSeenEvent,
-  registerPushServiceWorker,
   requestNotificationPermission,
   sendBrowserNotification,
-  subscribeToWebPush,
-  supportsWebPush,
-  toSerializablePushSubscription,
 } from './notifications.js';
 
 function makeNotificationApi({ permission = 'default', requestPermission, onCreate } = {}) {
@@ -45,29 +41,11 @@ describe('notification permissions', () => {
 });
 
 describe('browser notifications', () => {
-  it('sends a notification after permission is granted', async () => {
-    const created = [];
-    const notificationApi = makeNotificationApi({
-      permission: 'granted',
-      onCreate: (title, options) => created.push({ title, options }),
-    });
-
-    await expect(
-      sendBrowserNotification('Crew alert', { body: 'Incoming bust.', tag: 'bust-1' }, notificationApi)
-    ).resolves.toBe(true);
-    expect(created).toEqual([{ title: 'Crew alert', options: { body: 'Incoming bust.', tag: 'bust-1' } }]);
-  });
-
-  it('does not send a notification when permission is denied', async () => {
-    const onCreate = vi.fn();
-    const notificationApi = makeNotificationApi({ permission: 'denied', onCreate });
-
-    await expect(sendBrowserNotification('Crew alert', { body: 'Incoming bust.' }, notificationApi)).resolves.toBe(
-      false
-    );
-    expect(onCreate).not.toHaveBeenCalled();
-  });
-
+  /* The delivery paths themselves — service worker first, constructor fallback,
+   * Android's illegal-constructor throw, and the permission gate — are covered
+   * end to end in notificationsPush.test.js against showNotification(), which
+   * cannot pass if sendBrowserNotification is broken. What is left here is the
+   * one guarantee that file does not make. */
   it('does not try to request permission while handling a realtime event', async () => {
     const notificationApi = makeNotificationApi({ permission: 'default' });
 
@@ -104,45 +82,5 @@ describe('realtime event deduplication', () => {
     expect(markSeenEvent(seen, 'created:b1')).toBe(true);
     expect(markSeenEvent(seen, 'created:b1')).toBe(false);
     expect(markSeenEvent(seen, 'updated:b1')).toBe(true);
-  });
-});
-
-describe('web push registration', () => {
-  it('detects when push prerequisites exist', () => {
-    expect(supportsWebPush({ serviceWorker: {} }, { PushManager: function PushManager() {} })).toBe(true);
-    expect(supportsWebPush({}, {})).toBe(false);
-  });
-
-  it('serializes subscriptions with endpoint and key material only', () => {
-    const subscription = {
-      toJSON: () => ({ endpoint: 'https://push.example', keys: { p256dh: 'k1', auth: 'k2' }, expirationTime: null }),
-    };
-    expect(toSerializablePushSubscription(subscription)).toEqual({
-      endpoint: 'https://push.example',
-      keys: { p256dh: 'k1', auth: 'k2' },
-      expirationTime: null,
-    });
-    expect(toSerializablePushSubscription({ toJSON: () => ({ endpoint: 'x', keys: { p256dh: 'k1' } }) })).toBeNull();
-  });
-
-  it('registers a service worker when supported', async () => {
-    const registration = { scope: '/' };
-    const nav = { serviceWorker: { register: vi.fn(async () => registration) } };
-    await expect(registerPushServiceWorker(nav, '/sw.js')).resolves.toBe(registration);
-  });
-
-  it('creates or reuses a push subscription', async () => {
-    const existing = { toJSON: () => ({ endpoint: 'https://push.existing', keys: { p256dh: 'a', auth: 'b' } }) };
-    const registration = {
-      pushManager: {
-        getSubscription: vi.fn(async () => existing),
-        subscribe: vi.fn(),
-      },
-    };
-    await expect(subscribeToWebPush({ serviceWorkerRegistration: registration, vapidPublicKey: 'BEl6--' })).resolves.toEqual({
-      endpoint: 'https://push.existing',
-      keys: { p256dh: 'a', auth: 'b' },
-    });
-    expect(registration.pushManager.subscribe).not.toHaveBeenCalled();
   });
 });

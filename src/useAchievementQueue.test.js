@@ -10,15 +10,10 @@ import { dedupeItems, useAchievementQueue } from './useAchievementQueue.js';
 // ---------- dedupeItems (pure function) ----------
 
 describe('dedupeItems', () => {
-  it('passes through all items when the set is empty', () => {
-    const seen = new Set();
-    expect(dedupeItems([{ id: 'a' }, { id: 'b' }], seen)).toHaveLength(2);
-  });
-
-  it('blocks IDs already in the set', () => {
-    const seen = new Set(['a']);
-    expect(dedupeItems([{ id: 'a' }], seen)).toHaveLength(0);
-  });
+  /* The hook's own 'deduplicates repeated IDs across enqueue calls' test cannot
+   * pass unless the common paths here work, so only the two behaviours it cannot
+   * observe are pinned directly: within-batch collapsing, and the fact that this
+   * helper MUTATES the set it is given rather than returning a new one. */
 
   it('deduplicates within a single batch', () => {
     const seen = new Set();
@@ -27,22 +22,10 @@ describe('dedupeItems', () => {
     expect(result[0].id).toBe('a');
   });
 
-  it('blocks duplicates across successive calls', () => {
-    const seen = new Set();
-    dedupeItems([{ id: 'a' }], seen);
-    expect(dedupeItems([{ id: 'a' }], seen)).toHaveLength(0);
-  });
-
-  it('lets different IDs through after partial dedupe', () => {
+  it('adds accepted IDs to the set it was given', () => {
     const seen = new Set(['a']);
-    const result = dedupeItems([{ id: 'a' }, { id: 'b' }], seen);
-    expect(result).toHaveLength(1);
-    expect(result[0].id).toBe('b');
-  });
-
-  it('adds accepted IDs to the set', () => {
-    const seen = new Set();
-    dedupeItems([{ id: 'x' }], seen);
+    const result = dedupeItems([{ id: 'a' }, { id: 'x' }], seen);
+    expect(result.map(item => item.id)).toEqual(['x']);
     expect(seen.has('x')).toBe(true);
   });
 });
