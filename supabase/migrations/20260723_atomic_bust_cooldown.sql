@@ -1,5 +1,6 @@
 -- BUST — atomic Supabase bust cooldown enforcement
--- Safe to run after supabase/setup.sql. Repeatable.
+-- Repeatable. (Originally written to run after supabase/setup.sql, which has
+-- since been folded into 20260913020000_core_schema_baseline.sql.)
 --
 -- Why this exists:
 -- The original RLS-only cooldown check could race when two inserts arrived at

@@ -10,7 +10,7 @@ A real-time, mobile-first, satirical pressure-logging web app for a private crew
 ## Features
 - Giant BUST button with charge → explosion → note-capture sequence, SFX, and haptics
 - 2-hour cooldown enforced server-side (or by Postgres RLS in static mode)
-- Real-time group feed (WebSocket or Supabase Realtime) with toasts + web push: the crew is notified when anyone busts or unlocks an achievement, plus a staggered 5-7 day nag if you go quiet (desktop, Android, and installed iOS PWAs — see `NOTIFICATIONS.md`)
+- Real-time group feed (WebSocket or Supabase Realtime) with toasts + web push: the crew is notified when anyone busts or unlocks an achievement, plus a staggered 5-7 day nag if you go quiet (desktop, Android, and installed iOS PWAs — see `PROJECT.md`)
 - Environmental + market context per bust: temperature, barometric pressure, elevation, tide, city (reverse-geocoded), and the Bitcoin spot price at the moment you pressed the button
 - Analytics bay: leaderboard with sparklines & streaks, 30-day trend, daypart donut, hour histogram, weekly bars, weekday×hour heatmap, temp/pressure scatter with hover tooltips, all-time records
 - Operator profiles: XP levels with satirical rank titles, editable tagline, avatar re-roll, personal charts, badge showcase, permission controls
@@ -23,11 +23,11 @@ npm install
 npm run db:migrate
 npm run dev        # API :8787 + Vite :5173
 ```
-Static / GitHub Pages (no server — Supabase Auth + RLS + Realtime): see `DEPLOY.md`.
+Static / GitHub Pages (no server — Supabase Auth + RLS + Realtime): see `PROJECT.md`.
 
 ## CI / GitHub Pages
 - `CI` installs with `npm ci`, migrates a disposable PostgreSQL service, runs Vitest, verifies the DB connection/schema, and builds the page.
-- `Deploy to GitHub Pages` repeats the same DB-backed checks, requires `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` Actions secrets, then uploads `dist/` to Pages.
+- `Deploy to GitHub Pages` repeats the same DB-backed checks, applies `supabase/migrations/`, deploys every Edge Function, then builds and uploads `dist/` to Pages. See `PROJECT.md` for the required secrets.
 
 Sign-ups require the invite code `Bust4Me`.
 
@@ -44,6 +44,6 @@ React 19 + Vite, framer-motion, custom SVG charts, Express + `pg` (server mode),
 - `src/backend.js` — dual-mode backend adapter (REST/WS ↔ Supabase)
 - `src/audio.js` — SFX manager
 - `server/` — Express API, schema, migration
-- `supabase/setup.sql` — static-mode tables, RLS, realtime
+- `supabase/migrations/` — the database schema, single source of truth
 - `supabase/functions/` — Edge Functions (achievement reconciliation, push registration and dispatch)
-- `ACHIEVEMENTS_PLAN.md`, `ASSETS.md`, `DEPLOY.md`, `NOTIFICATIONS.md` — design docs
+- `PROJECT.md` — architecture, data model, notification system, deploy and triage. **Start here.**

@@ -1,5 +1,5 @@
 /*
- * Expansion achievement & badge catalog (see ACHIEVEMENTS_PLAN.md).
+ * Expansion achievement & badge catalog (see PROJECT.md).
  * Every item: { id, name, desc, tier, kind, category, micon (Material Symbol), points, check(ctx) }
  * ctx = { own, all, others, unlockedIds, opts:{ createdAt, userCount } }
  */
