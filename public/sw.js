@@ -11,7 +11,7 @@
  *
  * Bump SW_VERSION whenever this file changes so the update is obvious in logs.
  */
-const SW_VERSION = '2026-09-07.1';
+const SW_VERSION = '2026-09-13.1';
 
 const scopeUrl = () => new URL(self.registration.scope);
 const scoped = path => new URL(String(path).replace(/^\//, ''), scopeUrl()).toString();
@@ -165,6 +165,12 @@ self.addEventListener('message', event => {
     event.waitUntil?.(self.registration.showNotification(title, options));
   }
   if (data.type === 'bust-sw-version') {
-    event.source?.postMessage({ type: 'bust-sw-version', version: SW_VERSION });
+    // Reply down the MessageChannel port when the caller supplied one, so it can
+    // await a specific answer instead of racing every message the worker posts.
+    // `event.source` stays as the fallback for a caller that just fires and
+    // listens on the global handler.
+    const reply = { type: 'bust-sw-version', version: SW_VERSION };
+    if (event.ports && event.ports[0]) event.ports[0].postMessage(reply);
+    else event.source?.postMessage(reply);
   }
 });

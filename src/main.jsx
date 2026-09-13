@@ -21,6 +21,7 @@ import {
   pushBlockedReason,
   PUSH_REASON_MESSAGE,
   registerPushServiceWorker,
+  rotatePushEndpoint,
   showNotification,
   supportsWebPush,
 } from './notifications.js';
@@ -41,6 +42,7 @@ import { DebugMenu } from './DebugMenu.jsx';
 import { PermissionsDialog } from './PermissionsDialog.jsx';
 import { Lightbox } from './Lightbox.jsx';
 import { markSeenThisSession, permissionsAlreadyGranted, setOptedOut, shouldShowPermissionsDialog } from './permissionPrefs.js';
+import { checkForUpdate, CURRENT_BUILD_ID, shouldCheckNow } from './appVersion.js';
 import { clampMenuToViewport } from './contextMenu.js';
 import { useLongPress } from './useLongPress.js';
 
@@ -255,7 +257,30 @@ function Login({ onAuthed }) {
 
 function App(){ const [user,setUser]=useState(null); const [boot,setBoot]=useState(true); const [permissionDialog,setPermissionDialog]=useState(null); useEffect(()=>{backend.me().then(setUser).catch(()=>{}).finally(()=>setBoot(false))},[]); useEffect(()=>{ if(!user){ setPermissionDialog(null); return; } let active=true; if(!shouldShowPermissionsDialog()){ setPermissionDialog(false); return; } void permissionsAlreadyGranted().then(granted=>{ if(!active) return; if(granted){ setOptedOut(true); markSeenThisSession(); setPermissionDialog(false); return; } setPermissionDialog(true); }); return()=>{active=false}; },[user]); useEffect(()=>{ if(!supportsWebPush()) return; void registerPushServiceWorker(navigator, asset('sw.js')); },[]); if(boot||(user&&permissionDialog===null)) return <div className="boot">UNPACKING BUST BAY…</div>; return user?<Dashboard user={user} setUser={setUser} initialShowPerms={permissionDialog}/>:<Login onAuthed={setUser}/> }
 
+/* Two conditions the app is otherwise silent about, both of which end with the
+ * user receiving nothing while believing everything is fine.
+ *
+ * The update bar is deliberately non-blocking: a reload mid-charge would cost a
+ * bust, and the stale build still works — it is just missing fixes. A hard gate
+ * would be worse than the problem.
+ *
+ * The permission bar only appears on a CONFIRMED denial, where a re-request can
+ * still route the user to site settings. A dismissed prompt is not a denial. */
+function StatusBanners({updateReady,permissionLost,onDismissUpdate,onFixPermission}){
+  if(!updateReady&&!permissionLost) return null;
+  return <div className="status-banners">
+    {updateReady&&<div className="status-banner status-banner--update"><span>A newer build of BUST is live.</span><button onClick={()=>location.reload()}>UPDATE</button><button className="status-banner__dismiss" onClick={onDismissUpdate} aria-label="Dismiss">×</button></div>}
+    {permissionLost&&<div className="status-banner status-banner--warn"><span>Notifications are blocked — you will miss crew alerts.</span><button onClick={onFixPermission}>FIX</button></div>}
+  </div>;
+}
+
 function Dashboard({user,setUser,initialShowPerms}){ const [showPerms,setShowPerms]=useState(initialShowPerms); const [installGuide,setInstallGuide]=useState(null); const [busts,setBusts]=useState([]),[users,setUsers]=useState([]),[unlocks,setUnlocks]=useState([]); const [debugBusts,setDebugBusts]=useState([]),[debugUnlocks,setDebugUnlocks]=useState([]),[debugXp,setDebugXp]=useState(0); const [overlay,setOverlay]=useState(null),[selected,setSelected]=useState(null),[phase,setPhase]=useState('idle'),[pendingCtx,setPendingCtx]=useState(null),[toasts,setToasts]=useState([]),[unread,setUnread]=useState(0),[muted,setMuted]=useState(sfx.isMuted()); const bustRef=useRef([]); bustRef.current=busts; const unlocksRef=useRef([]); unlocksRef.current=unlocks; const usersRef=useRef([]); usersRef.current=users; const chargeSfx=useRef(null); const seenRealtimeEvents=useRef(new Set()); const [,tick]=useState(0);
+  // Stale-install and revoked-permission banners. Both are conditions the app
+  // cannot otherwise report: the first is invisible by definition, and the
+  // second is a setting changed outside the app that silently kills delivery.
+  const [updateReady,setUpdateReady]=useState(false);
+  const [permissionLost,setPermissionLost]=useState(false);
+  const lastUpdateCheck=useRef(null);
   const { current: badgeToast, enqueue: enqueueBadge, dismiss: dismissBadge } = useAchievementQueue(5200);
   const remaining = twoHoursRemainingMs(user.last_bust_timestamp); const locked = remaining > 0 && phase==='idle';
   /* Mirror the unread count onto the installed app icon. Supported on Android
@@ -300,6 +325,20 @@ function Dashboard({user,setUser,initialShowPerms}){ const [showPerms,setShowPer
     const rearm = () => { if (!closed && document.visibilityState === 'visible') void rearmPushSilently(); };
     void rearmPushSilently();
     document.addEventListener('visibilitychange', rearm);
+    /* An installed PWA is not a page you refresh — iOS in particular keeps one
+     * document alive for weeks — so a stale install can sit there re-running an
+     * old push registration path and never see a fix. Checking on foreground
+     * (rate-limited in shouldCheckNow) is what surfaces that. */
+    const checkUpdate = () => {
+      if (closed || document.visibilityState !== 'visible') return;
+      if (!shouldCheckNow(lastUpdateCheck.current)) return;
+      lastUpdateCheck.current = Date.now();
+      void checkForUpdate({ url: asset('version.json') }).then(stale => {
+        if (!closed && stale) setUpdateReady(true);
+      });
+    };
+    checkUpdate();
+    document.addEventListener('visibilitychange', checkUpdate);
     const onMessage = event => {
       const data = event.data || {};
       if (data.type === 'bust-push-resubscribed' && data.subscription) {
@@ -321,9 +360,25 @@ function Dashboard({user,setUser,initialShowPerms}){ const [showPerms,setShowPer
     return () => {
       closed = true;
       document.removeEventListener('visibilitychange', rearm);
+      document.removeEventListener('visibilitychange', checkUpdate);
       navigator.serviceWorker?.removeEventListener('message', onMessage);
     };
   }, [openPushTarget, user.id]);
+  /* Permissions can be revoked outside the app — iOS Settings, a Chrome site
+   * reset, a Focus mode change — and nothing tells the page. Re-check on
+   * foreground and surface it, because the alternative is a user who believes
+   * notifications are on and quietly receives nothing. Only a CONFIRMED denial
+   * counts: 'default' means the prompt is still answerable, and 'unsupported'
+   * means this browser was never going to work and is reported elsewhere. */
+  useEffect(() => {
+    const check = () => {
+      if (document.visibilityState !== 'visible') return;
+      setPermissionLost(getNotificationPermission() === 'denied');
+    };
+    check();
+    document.addEventListener('visibilitychange', check);
+    return () => document.removeEventListener('visibilitychange', check);
+  }, []);
   /* Fallback nag loop for browsers with no push support (the server can't reach
    * them, so the open tab has to do it). Push-capable browsers get reminders
    * from dispatch-inactivity-reminders instead. */
@@ -484,7 +539,7 @@ function Dashboard({user,setUser,initialShowPerms}){ const [showPerms,setShowPer
   const analytics=useMemo(()=>buildAnalytics(effectiveBusts,users,user,effectiveUnlocks,debugXp),[effectiveBusts,users,user,effectiveUnlocks,debugXp]);
   const myLevel=useMemo(()=>debugXp?levelForXp(debugXp):derivePersonalStats(user.id,effectiveBusts,effectiveUnlocks).level,[user.id,effectiveBusts,effectiveUnlocks,debugXp]);
   const mythicIds=useMemo(()=>new Set(analytics.leaderboard.filter(u=>u.lvl.nextAt==null).map(u=>u.id)),[analytics.leaderboard]);
-  return <main className={`dash ${locked?'cooldown-mode':''} ${phase==='charge'?'charging':''} ${phase==='explode'?'detonating':''}`}><GridBg/><PermissionGate active={phase==='charge'}/>{showPerms&&<PermissionsDialog onDone={r=>{setShowPerms(false);setInstallGuide(r?.guide||null);}} enablePush={enablePushNotifications} getNotificationPermission={getNotificationPermission}/>}{installGuide&&<Lightbox src={installGuide} alt="How to install BUST" onClose={()=>setInstallGuide(null)}/>}{locked&&<CooldownGoop/>}<header className="top-bar"><button className="profile-chip" onClick={()=>setOverlay('profile')}><img src={avatar(user.avatar_seed)}/><span className={myLevel.title==='MasterBaiter'?'rank-mythic':''}>{user.username}</span></button><img className="brand-mark" src={asset('bust-logo.png')} alt="" aria-hidden="true"/><div className="top-actions"><button className="icon-btn" title={muted?'Unmute SFX':'Mute SFX'} onClick={()=>setMuted(sfx.toggleMuted())}>{muted?<VolumeX/>:<Volume2/>}</button><button className="icon-btn" onClick={()=>{setOverlay('alerts');setUnread(0)}}><Bell/>{unread>0&&<b>{unread}</b>}</button><button className="icon-btn trophy-action" onClick={()=>setOverlay('trophy')}><Trophy/><small>{new Set(effectiveUnlocks.filter(a=>a.user_id===user.id).map(a=>a.achievement_type)).size}</small></button></div></header><section className="button-stage">{locked?<CooldownScene/>:<BustButton phase={phase} onClick={startBust}/>}</section><button className="drawer-handle" onClick={()=>setOverlay('analytics')}><ChevronUp/> ANALYTICS BAY</button><Toasts toasts={toasts} setToasts={setToasts} onOpen={setSelected} mythicIds={mythicIds}/><AnimatePresence>{badgeToast&&<BadgeToast key="badge-toast" badge={badgeToast}/>} {overlay&&<Overlay key={`overlay-${overlay}`} title={overlayTitle(overlay)} onClose={()=>setOverlay(null)} showScrollTop={['profile','analytics','trophy'].includes(overlay)}>{overlay==='profile'&&<Profile user={user} setUser={setUser} busts={effectiveBusts} unlocks={effectiveUnlocks} users={users} onOpen={setSelected} mythicIds={mythicIds} debug={{xp:debugXp,setXp:setDebugXp,onBust:addDebugBust,onUnlock:addDebugUnlock,onClear:clearDebug,onResetCooldown:resetDebugCooldown,counts:{busts:debugBusts.length,unlocks:debugUnlocks.length}}}/>} {overlay==='alerts'&&<Alerts busts={effectiveBusts} onOpen={setSelected} mythicIds={mythicIds}/>} {overlay==='analytics'&&<Analytics data={analytics} busts={effectiveBusts} onOpen={setSelected} mythicIds={mythicIds}/>} {overlay==='trophy'&&<TrophyCabinet unlocks={effectiveUnlocks} busts={effectiveBusts} user={user}/>}</Overlay>} {selected&&<Detail key={`detail-${selected.id}`} bust={selected} all={effectiveBusts} currentUserId={user.id} onSaveNote={saveBustNote} onClose={()=>setSelected(null)} mythicIds={mythicIds}/>}</AnimatePresence>{phase==='explode'&&<Explosion/>}</main> }
+  return <main className={`dash ${locked?'cooldown-mode':''} ${phase==='charge'?'charging':''} ${phase==='explode'?'detonating':''}`}><GridBg/><PermissionGate active={phase==='charge'}/>{showPerms&&<PermissionsDialog onDone={r=>{setShowPerms(false);setInstallGuide(r?.guide||null);}} enablePush={enablePushNotifications} getNotificationPermission={getNotificationPermission}/>}{installGuide&&<Lightbox src={installGuide} alt="How to install BUST" onClose={()=>setInstallGuide(null)}/>}{locked&&<CooldownGoop/>}<StatusBanners updateReady={updateReady} permissionLost={permissionLost} onDismissUpdate={()=>setUpdateReady(false)} onFixPermission={()=>{void enablePushNotifications({interactive:true}).then(()=>setPermissionLost(getNotificationPermission()==='denied'))}}/><header className="top-bar"><button className="profile-chip" onClick={()=>setOverlay('profile')}><img src={avatar(user.avatar_seed)}/><span className={myLevel.title==='MasterBaiter'?'rank-mythic':''}>{user.username}</span></button><img className="brand-mark" src={asset('bust-logo.png')} alt="" aria-hidden="true"/><div className="top-actions"><button className="icon-btn" title={muted?'Unmute SFX':'Mute SFX'} onClick={()=>setMuted(sfx.toggleMuted())}>{muted?<VolumeX/>:<Volume2/>}</button><button className="icon-btn" onClick={()=>{setOverlay('alerts');setUnread(0)}}><Bell/>{unread>0&&<b>{unread}</b>}</button><button className="icon-btn trophy-action" onClick={()=>setOverlay('trophy')}><Trophy/><small>{new Set(effectiveUnlocks.filter(a=>a.user_id===user.id).map(a=>a.achievement_type)).size}</small></button></div></header><section className="button-stage">{locked?<CooldownScene/>:<BustButton phase={phase} onClick={startBust}/>}</section><button className="drawer-handle" onClick={()=>setOverlay('analytics')}><ChevronUp/> ANALYTICS BAY</button><Toasts toasts={toasts} setToasts={setToasts} onOpen={setSelected} mythicIds={mythicIds}/><AnimatePresence>{badgeToast&&<BadgeToast key="badge-toast" badge={badgeToast}/>} {overlay&&<Overlay key={`overlay-${overlay}`} title={overlayTitle(overlay)} onClose={()=>setOverlay(null)} showScrollTop={['profile','analytics','trophy'].includes(overlay)}>{overlay==='profile'&&<Profile user={user} setUser={setUser} busts={effectiveBusts} unlocks={effectiveUnlocks} users={users} onOpen={setSelected} mythicIds={mythicIds} debug={{xp:debugXp,setXp:setDebugXp,onBust:addDebugBust,onUnlock:addDebugUnlock,onClear:clearDebug,onResetCooldown:resetDebugCooldown,counts:{busts:debugBusts.length,unlocks:debugUnlocks.length}}}/>} {overlay==='alerts'&&<Alerts busts={effectiveBusts} onOpen={setSelected} mythicIds={mythicIds}/>} {overlay==='analytics'&&<Analytics data={analytics} busts={effectiveBusts} onOpen={setSelected} mythicIds={mythicIds}/>} {overlay==='trophy'&&<TrophyCabinet unlocks={effectiveUnlocks} busts={effectiveBusts} user={user}/>}</Overlay>} {selected&&<Detail key={`detail-${selected.id}`} bust={selected} all={effectiveBusts} currentUserId={user.id} onSaveNote={saveBustNote} onClose={()=>setSelected(null)} mythicIds={mythicIds}/>}</AnimatePresence>{phase==='explode'&&<Explosion/>}</main> }
 function GridBg(){ return <div className="grid-bg"/> }
 function BustButton({phase,onClick}){ return <motion.button className="bust-button" disabled={phase!=='idle'} onClick={onClick} animate={phase==='charge'?{scale:[1,1.07,.96,1.09,1],rotate:[0,-3,3,-5,5,0]}:{}} transition={{duration:.18,repeat:phase==='charge'?Infinity:0}}><span>{phase==='charge'?'Edging…':'BUST'}</span>{phase==='charge'&&<><i/><i/><i/><i/></>}</motion.button> }
 function Explosion(){ const drops=Array.from({length:110}); const ropes=Array.from({length:18}); const shards=Array.from({length:30}); return <div className="explosion"><div className="blast-flash"/>{ropes.map((_,i)=><b className="goop-rope" key={`r${i}`} style={{'--l':`${Math.random()*100}%`,'--w':`${22+Math.random()*80}px`,'--h':`${38+Math.random()*70}vh`,'--d':`${Math.random()*.55}s`}}/>)}{drops.map((_,i)=><span className="milk-drop" key={`d${i}`} style={{'--x':`${Math.random()*150-75}vw`,'--y':`${Math.random()*120-60}vh`,'--s':`${7+Math.random()*28}px`,'--d':`${Math.random()*1.1}s`}}/>)}{shards.map((_,i)=><i className="button-shard" key={`s${i}`} style={{'--x':`${Math.random()*120-60}vw`,'--y':`${Math.random()*100-50}vh`,'--r':`${Math.random()*900-450}deg`,'--d':`${Math.random()*.6}s`}}/>)}<div className="milk-sheet"/><div className="screen-splatter"/></div> }
@@ -623,7 +678,7 @@ function Profile({user,setUser,busts,unlocks,users,onOpen,debug,mythicIds}){
     <div className="feed two-col">{own.length?own.slice(0,10).map(b=><BustCard key={b.id} b={b} onOpen={onOpen} mythicIds={mythicIds}/>):<EmptyState text="Your ledger is empty. The button awaits."/>}</div>
     <div className="logout-row"><button className="mf-button ghost" onClick={async()=>{await backend.logout();setUser(null)}}><LogOut/> LOG OUT</button><button className="mf-button ghost danger no-callout" {...debugPress.handlers} onContextMenu={e=>{ e.preventDefault(); setCtx({x:e.clientX,y:e.clientY}); }} onClick={()=>{ if(debugPress.consumeClick()) return; setConfirmDel(true); }}>DELETE ACCOUNT</button></div>
     {ctx&&<DebugContextMenu at={ctx} onClose={()=>setCtx(null)} onOpenDebug={()=>{setCtx(null);setShowDebug(true);}}/>}
-    {showDebug&&debug&&<DebugMenu debug={debug} username={user.username} users={users} logoSrc={asset('bust-logo.png')} onClose={()=>setShowDebug(false)}/>}
+    {showDebug&&debug&&<DebugMenu debug={debug} username={user.username} users={users} logoSrc={asset('bust-logo.png')} onClose={()=>setShowDebug(false)} enablePush={enablePushNotifications} rotateEndpoint={()=>rotatePushEndpoint({backend, workerPath: asset('sw.js')})} buildId={CURRENT_BUILD_ID} versionUrl={asset('version.json')}/>}
     {confirmDel&&<DeleteAccountModal onClose={()=>setConfirmDel(false)} onDeleted={()=>setUser(null)}/>}
   </div> }
 function Alerts({busts,onOpen,mythicIds}){ return <div className="feed two-col">{busts.map(b=><BustCard key={b.id} b={b} onOpen={onOpen} mythicIds={mythicIds}/>)}</div> }

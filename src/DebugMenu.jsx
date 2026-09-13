@@ -17,6 +17,8 @@ import { backend } from './backend.js';
 import { describeTokens, renderBroadcast, unknownTokens } from './broadcastTemplate.js';
 import { summarizeDeliveries } from './pushDeliveryReport.js';
 import { MIcon, matMap } from './badgeIcons.jsx';
+import { detectPushPlatform, getNotificationPermission } from './notifications.js';
+import { fetchBuildManifest, readServiceWorkerVersion } from './appVersion.js';
 import { Lightbox } from './Lightbox.jsx';
 
 const TABS = [
@@ -24,6 +26,7 @@ const TABS = [
   { id: 'progress', label: 'PROGRESS' },
   { id: 'notify', label: 'NOTIFY' },
   { id: 'delivery', label: 'DELIVERY' },
+  { id: 'device', label: 'DEVICE' },
   { id: 'accounts', label: 'ACCOUNTS' },
   { id: 'tools', label: 'TOOLS' },
   { id: 'session', label: 'SESSION' },
@@ -372,6 +375,138 @@ function DeliveryTab() {
 
 /* -------------------------------- Tools tab ------------------------------- */
 
+/* ------------------------------- Device tab -------------------------------
+ *
+ * Answers "why is this specific phone getting nothing", which every other tab
+ * is the wrong shape for: NOTIFY sends, DELIVERY reports on the crew. The
+ * questions here are all about the device you are holding.
+ *
+ * The health block is the part worth reading. `unacked` counts pushes a push
+ * service ACCEPTED for this endpoint that the device never acknowledged, and it
+ * is the only way to tell a working endpoint from one Apple accepts and
+ * silently discards — APNs answers 201 either way and the browser keeps handing
+ * back a subscription whose VAPID key still matches. A climbing unacked with a
+ * null last ack means the endpoint is a ghost; ROTATE mints a new one.
+ */
+function DeviceTab({ enablePush, rotateEndpoint, buildId, versionUrl }) {
+  const [state, setState] = useState({ status: 'idle', message: '' });
+  const [info, setInfo] = useState(null);
+  const [swVersion, setSwVersion] = useState(null);
+  const [latestBuild, setLatestBuild] = useState(null);
+
+  const platform = useMemo(() => detectPushPlatform(), []);
+
+  const refresh = async () => {
+    setState({ status: 'working', message: 'Re-arming push…' });
+    const [outcome, sw, manifest] = await Promise.all([
+      // interactive:false so opening this tab can never fire a permission
+      // prompt the user did not ask for.
+      enablePush({ interactive: false }).catch(error => ({
+        ok: false,
+        reason: 'threw',
+        detail: String(error?.message || error),
+      })),
+      readServiceWorkerVersion(),
+      fetchBuildManifest(versionUrl),
+    ]);
+    setInfo(outcome);
+    setSwVersion(sw);
+    setLatestBuild(manifest?.buildId || null);
+    setState({
+      status: outcome?.ok ? 'ok' : 'error',
+      message: outcome?.ok
+        ? outcome.rotated
+          ? 'Push armed — endpoint was dead and has been rotated.'
+          : 'Push armed.'
+        : `${outcome?.reason || 'failed'}${outcome?.detail ? ` — ${outcome.detail}` : ''}`,
+    });
+  };
+
+  const testPing = async () => {
+    setState({ status: 'working', message: 'Sending test ping…' });
+    // sendTest targets only the endpoint that just registered, so this never
+    // reaches another device — not even another of your own.
+    const outcome = await enablePush({ interactive: false, sendTest: true }).catch(error => ({
+      ok: false,
+      reason: String(error?.message || error),
+    }));
+    const test = outcome?.server?.test;
+    setInfo(outcome);
+    setState({
+      status: outcome?.ok && test?.delivered ? 'ok' : 'error',
+      message: outcome?.ok
+        ? `Accepted by push service: ${test?.delivered ?? 0}/${test?.attempted ?? 0}.${test?.failures?.length ? ` ${test.failures.join('; ')}` : ' Watch for it on the lock screen — acceptance is not delivery.'}`
+        : `${outcome?.reason || 'failed'}`,
+    });
+  };
+
+  const rotate = async () => {
+    setState({ status: 'working', message: 'Rotating endpoint…' });
+    const outcome = await rotateEndpoint().catch(error => ({ ok: false, reason: String(error?.message || error) }));
+    setState({
+      status: outcome?.ok ? 'ok' : 'error',
+      message: outcome?.ok
+        ? 'New endpoint registered; the old one was dropped.'
+        : `Rotation failed — ${outcome?.reason || 'unknown'}`,
+    });
+    if (outcome?.ok) await refresh();
+  };
+
+  const health = info?.server?.health || null;
+  const rows = [
+    ['App build', buildId],
+    ['Deployed build', latestBuild ?? '—'],
+    ['Service worker', swVersion ?? 'not controlling this page'],
+    ['Permission', getNotificationPermission()],
+    [
+      'Platform',
+      [platform.ios && 'iOS', platform.android && 'Android', platform.standalone && 'installed']
+        .filter(Boolean)
+        .join(' · ') || 'desktop browser',
+    ],
+    [
+      'Push APIs',
+      [platform.hasServiceWorker && 'sw', platform.hasPushManager && 'push', platform.hasNotification && 'notification']
+        .filter(Boolean)
+        .join(' · ') || 'none',
+    ],
+    ['Endpoint', info?.endpoint ? `${new URL(info.endpoint).host}…${info.endpoint.slice(-8)}` : '—'],
+    ['Sent unacked', health ? String(health.unackedCount) : '—'],
+    ['Last confirmed', health?.lastAckAt ? new Date(health.lastAckAt).toLocaleString() : 'never'],
+    ['Send failures', health ? String(health.failureCount) : '—'],
+  ];
+
+  return (
+    <div className="debug-panel">
+      <p className="showcase-hint">
+        This device only. Nothing here notifies the crew.
+        {latestBuild && latestBuild !== buildId ? ' A newer build is deployed — reload to pick it up.' : ''}
+      </p>
+      <dl className="device-facts">
+        {rows.map(([label, value]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
+      {state.status === 'error' && <p className="broadcast-warn">{state.message}</p>}
+      {state.status === 'ok' && <p className="broadcast-ok">{state.message}</p>}
+      <div className="picker-actions">
+        <button className="mf-button ghost" disabled={state.status === 'working'} onClick={refresh}>
+          REFRESH
+        </button>
+        <button className="mf-button ghost" disabled={state.status === 'working'} onClick={testPing}>
+          TEST PING THIS DEVICE
+        </button>
+        <button className="mf-button ghost danger" disabled={state.status === 'working'} onClick={rotate}>
+          ROTATE ENDPOINT
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ToolsTab({ logoSrc }) {
   const [lightbox, setLightbox] = useState(false);
   return (
@@ -499,7 +634,17 @@ function AccountsTab({ users }) {
 
 /* ------------------------------- Debug menu ------------------------------- */
 
-export function DebugMenu({ debug, username, users, logoSrc, onClose }) {
+export function DebugMenu({
+  debug,
+  username,
+  users,
+  logoSrc,
+  onClose,
+  enablePush,
+  rotateEndpoint,
+  buildId,
+  versionUrl,
+}) {
   const [tab, setTab] = useState('bust');
   const [form, setForm] = useState({
     note: 'Debug bust',
@@ -613,6 +758,14 @@ export function DebugMenu({ debug, username, users, logoSrc, onClose }) {
 
         {tab === 'notify' && <NotifyTab username={username} users={users} />}
         {tab === 'delivery' && <DeliveryTab />}
+        {tab === 'device' && (
+          <DeviceTab
+            enablePush={enablePush}
+            rotateEndpoint={rotateEndpoint}
+            buildId={buildId}
+            versionUrl={versionUrl}
+          />
+        )}
         {tab === 'accounts' && <AccountsTab users={users} />}
         {tab === 'tools' && <ToolsTab logoSrc={logoSrc} />}
 
