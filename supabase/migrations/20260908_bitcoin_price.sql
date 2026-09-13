@@ -24,9 +24,13 @@ $$;
 -- Supports the analytics scatter and the personal high/low achievement checks.
 create index if not exists busts_btc_usd_idx on public.busts (btc_usd) where btc_usd is not null;
 
--- New achievement ids, so the legacy SQL reconciler in setup.sql accepts them
--- too. The Edge Function validates against the JavaScript catalog instead, but
--- the two lists should not silently diverge.
+-- New achievement ids. These must exist here before any unlock references them,
+-- because achievements.achievement_type is a foreign key onto this table.
+-- src/achievementCatalog.test.js checks this list plus every other seed against
+-- src/rules.js so the two cannot silently diverge.
+--
+-- (This comment originally pointed at a SQL reconciler in setup.sql. Both that
+-- function and that file are gone — see 20260913020000_core_schema_baseline.sql.)
 insert into public.achievement_catalog (id)
 select x.id
 from unnest(array[
