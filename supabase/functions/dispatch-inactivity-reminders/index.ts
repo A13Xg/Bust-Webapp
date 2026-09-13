@@ -55,15 +55,22 @@ Deno.serve(async req => {
       const userIds = batch.map((profile: { id: string }) => profile.id);
       if (!userIds.length) continue;
 
-      const [statesResult, subscriptionsResult] = await Promise.all([
+      const [statesResult, subscriptionRows] = await Promise.all([
         admin
           .from('inactivity_reminders')
           .select('user_id,cycle_bust_at,scheduled_for,last_sent_at,last_message_index')
+          // One row per user by primary key, so this is bounded by BATCH_SIZE
+          // and cannot exceed PostgREST's unranged cap.
           .in('user_id', userIds),
-        admin.from('push_subscriptions').select('id,user_id,endpoint,p256dh,auth').in('user_id', userIds),
+        // Paginated, because subscriptions are one row per DEVICE. An unranged
+        // select is capped at 1000 rows, so a batch of 200 users with several
+        // devices each would silently skip the tail — the same failure
+        // subscriptionsForCrew was fixed for.
+        fetchAllPages((from: number, to: number) =>
+          admin.from('push_subscriptions').select('id,user_id,endpoint,p256dh,auth').in('user_id', userIds).range(from, to)
+        ) as Promise<Array<{ id: number; user_id: string; endpoint: string; p256dh: string; auth: string }>>,
       ]);
       if (statesResult.error) throw new Error(statesResult.error.message);
-      if (subscriptionsResult.error) throw new Error(subscriptionsResult.error.message);
 
       const stateByUser = new Map(
         (statesResult.data || []).map(state => [
@@ -77,7 +84,7 @@ Deno.serve(async req => {
         ])
       );
       const subscriptionsByUser = new Map<string, Array<{ id: number; user_id: string; endpoint: string; p256dh: string; auth: string }>>();
-      for (const sub of subscriptionsResult.data || []) {
+      for (const sub of subscriptionRows) {
         if (!subscriptionsByUser.has(sub.user_id)) subscriptionsByUser.set(sub.user_id, []);
         subscriptionsByUser.get(sub.user_id)?.push(sub);
       }
