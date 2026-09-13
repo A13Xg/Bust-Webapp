@@ -43,6 +43,52 @@ async function claimWithoutSending(
   }
 }
 
+/*
+ * One reconcile writes every newly earned achievement in a single upsert, so a
+ * burst shares one `unlocked_at` to within the round trip. Two minutes is far
+ * wider than that and still far narrower than the backstop's one-hour lookback.
+ */
+const BURST_WINDOW_MS = 2 * 60 * 1000;
+
+/**
+ * Retire the rows a bust unlocked but did not announce.
+ *
+ * Without this the cap is a delay, not a cap. The client picks one unlock to
+ * announce and simply drops the rest — but those rows are still sitting in
+ * `achievements` inside dispatch-push-backstop's lookback with no `push_events`
+ * row, so the next sweep treats one of them as un-announced and pushes it. The
+ * ten-minute cooldown slot does not stop that: the slot the client used has
+ * already expired by the time the sweep runs, so the sweep claims a fresh one.
+ * Net effect was two achievement pushes per bust, ten minutes apart.
+ *
+ * Claiming them with zero recipients records them as handled, which is the only
+ * thing the sweep checks.
+ */
+async function retireUnannouncedSiblings(
+  admin: SupabaseClient,
+  actorId: string,
+  anchorUnlockedAt: string | null | undefined,
+  announcedId: string
+) {
+  const anchor = anchorUnlockedAt ? new Date(anchorUnlockedAt).getTime() : Date.now();
+  if (!Number.isFinite(anchor)) return;
+  const { data, error } = await admin
+    .from('achievements')
+    .select('id')
+    .eq('user_id', actorId)
+    .gte('unlocked_at', new Date(anchor - BURST_WINDOW_MS).toISOString())
+    .lte('unlocked_at', new Date(anchor + BURST_WINDOW_MS).toISOString());
+  if (error) {
+    // Best-effort: the worst case is the pre-existing behaviour, one extra push.
+    console.error('[announce] could not retire siblings', error.message);
+    return;
+  }
+  for (const row of data || []) {
+    if (row.id === announcedId) continue;
+    await claimWithoutSending(admin, 'achievement', row.id, actorId);
+  }
+}
+
 async function usernameFor(admin: SupabaseClient, userId: string) {
   const { data } = await admin.from('profiles').select('username').eq('id', userId).maybeSingle();
   return data?.username || 'Someone';
@@ -104,7 +150,7 @@ export async function announceBust(
 
 export async function announceAchievement(
   admin: SupabaseClient,
-  achievement: { id: string; user_id: string; achievement_type: string },
+  achievement: { id: string; user_id: string; achievement_type: string; unlocked_at?: string | null },
   username?: string
 ) {
   const meta = achievementById.get(achievement.achievement_type) as
@@ -141,5 +187,13 @@ export async function announceAchievement(
     achievementId: achievement.achievement_type,
     tier: meta.tier,
   });
-  return announce(admin, 'achievement', achievement.id, achievement.user_id, payload, slotEventId);
+  const outcome = await announce(admin, 'achievement', achievement.id, achievement.user_id, payload, slotEventId);
+
+  // Only after a send actually went out. On 'failed' the claim was released so
+  // the sweep can retry this row, and retiring its siblings then would throw
+  // away the backlog the retry is meant to cover.
+  if (outcome.status === 'sent') {
+    await retireUnannouncedSiblings(admin, achievement.user_id, achievement.unlocked_at, achievement.id);
+  }
+  return outcome;
 }
