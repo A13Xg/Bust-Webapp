@@ -30,7 +30,16 @@ export function detectInstallPlatform(navigatorObject = globalThis.navigator) {
   const platform = String(navigatorObject?.platform || '');
   const touchPoints = Number(navigatorObject?.maxTouchPoints || 0);
   // iPadOS reports a desktop-class UA, so touch points are what give it away.
-  const ios = /iPhone|iPad|iPod/i.test(ua) || (platform === 'MacIntel' && touchPoints > 1);
+  //
+  // Both `navigator.platform` and the UA are consulted, and they must stay in
+  // step with detectPushPlatform() in notifications.js, which tests the UA
+  // only. `navigator.platform` is deprecated and a browser that stops
+  // populating it would split the two detectors: push would call an iPad iOS
+  // and report `ios-needs-install`, while this function would call it desktop
+  // and hand the user the ANDROID install guide — wrong instructions at exactly
+  // the moment they are needed to unblock push.
+  const desktopClassIpad = (platform === 'MacIntel' || /Macintosh/i.test(ua)) && touchPoints > 1;
+  const ios = /iPhone|iPad|iPod/i.test(ua) || desktopClassIpad;
   const android = /Android/i.test(ua);
   const mobile = ios || android || /Mobile/i.test(ua);
   const safari = ios && /Safari/i.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/i.test(ua);

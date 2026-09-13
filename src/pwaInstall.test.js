@@ -26,6 +26,18 @@ describe('PWA install platform detection', () => {
     expect(platform.mobile).toBe(true);
   });
 
+  /* navigator.platform is deprecated. If a browser stops populating it, this
+   * detector must still agree with detectPushPlatform() in notifications.js,
+   * which reads the UA alone — otherwise an iPad is told to install via the
+   * Android guide while push reports ios-needs-install. */
+  it('still detects an iPad when navigator.platform is unavailable', () => {
+    const platform = detectInstallPlatform({
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
+      maxTouchPoints: 5,
+    });
+    expect(platform.ios).toBe(true);
+  });
+
   it('does not mistake a real Mac for an iPad', () => {
     const platform = detectInstallPlatform({
       userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15',
