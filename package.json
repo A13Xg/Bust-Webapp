@@ -3,10 +3,13 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
+  "packageManager": "npm@11.17.0",
   "engines": {
-    "node": ">=18"
+    "node": ">=18",
+    "npm": ">=10"
   },
   "scripts": {
+    "preinstall": "npx --yes only-allow npm",
     "dev": "concurrently -k \"npm:dev:server\" \"npm:dev:client\"",
     "dev:client": "vite --host 127.0.0.1",
     "dev:server": "node server/index.js",
