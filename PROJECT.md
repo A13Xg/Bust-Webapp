@@ -23,23 +23,16 @@ Live at `https://a13xg.github.io/Bust-Webapp/`. Supabase project ref
 
 ---
 
-## 2. Two backends, one client
+## 2. One backend
 
-`src/backend.js` picks one at build time and everything else is written against
-its interface.
-
-| Mode | When | Auth | Data | Realtime |
-| --- | --- | --- | --- | --- |
-| **Static** (production) | `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` present at build | Supabase Auth, synthetic emails (`alexg@bust-ops.dev`) | Postgres via PostgREST + RLS | Supabase Realtime |
-| **Server** (local dev only) | otherwise | JWT from `server/index.js` | `server/db.js` + `pg` | WebSocket |
-
-The two have **separate account stores** — static mode uses `profiles`, server
-mode uses `users`. They never share data.
-
-In practice `.env` sets the Supabase vars, so `npm run dev` also runs static
-mode. The Express server is effectively dead weight kept alive by
-`npm run db:migrate` / `npm run db:check` in CI. Removing it is a reasonable
-future cleanup; it is not wired to anything the crew uses.
+`src/backend.js` talks to Supabase directly — Auth (synthetic emails,
+`alexg@bust-ops.dev`), Postgres via PostgREST + RLS, and Realtime — and
+everything else is written against its interface. `npm run dev` requires
+`VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` to be set (see `.env.example`);
+there is no local server and no separate account store to fall out of sync
+with. (An earlier "server mode" — a JWT-authed Express API over a separate
+`pg`-backed `users` table — was removed once it stopped being wired to
+anything the crew used; see git history before 2026-09-27 if you need it.)
 
 ---
 
@@ -339,7 +332,7 @@ signed correctly. A 401/403 means the credentials are wrong.
 src/main.jsx            app shell, dashboard, overlays, bust flow
 src/rules.js            cooldown, XP, streaks, records, legacy + progression catalog
 src/expansion.js        expansion/social/market achievement catalog
-src/backend.js          dual-mode backend adapter
+src/backend.js          Supabase backend adapter (auth, postgrest, realtime)
 src/notifications.js    permission, service worker, subscription, rotation
 src/notificationMessages.js  copy, shared verbatim with the Edge Functions
 src/appVersion.js       stale-install detection
@@ -348,7 +341,6 @@ src/inactivityReminder.js  the 5-7 day nag state machine
 src/DebugMenu.jsx       the debug overlay
 src/charts.jsx          SVG chart primitives
 public/sw.js            push receiver; NOT a caching worker
-server/                 Express dev-mode API (separate account store)
 supabase/migrations/    the schema, single source of truth
 supabase/functions/     Edge Functions (Deno)
 scripts/generate-icons.py   regenerates public/icons from art/
