@@ -24,8 +24,3 @@ src/useAchievementQueue.test.js
 src/installBootstrap.js
 src/pwaInstall.js
 src/pwaInstall.test.js
-server/db.js
-server/index.js
-server/migrate.js
-server/schema.js
-scripts/ci-db-check.mjs

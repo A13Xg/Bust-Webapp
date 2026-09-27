@@ -10,35 +10,24 @@
   },
   "scripts": {
     "preinstall": "npx --yes only-allow npm",
-    "dev": "concurrently -k \"npm:dev:server\" \"npm:dev:client\"",
-    "dev:client": "vite --host 127.0.0.1",
-    "dev:server": "node server/index.js",
+    "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "lint": "eslint src server scripts public/sw.js",
+    "lint": "eslint src public/sw.js",
     "lint:functions": "deno lint --config supabase/functions/deno.json supabase/functions",
     "typecheck:functions": "deno check --config supabase/functions/deno.json supabase/functions/*/index.ts",
-    "format:check": "prettier --check \"src/**/*.{js,jsx,css}\" \"server/**/*.js\" \"scripts/**/*.mjs\"",
-    "typecheck": "tsc --noEmit",
-    "db:check": "node scripts/ci-db-check.mjs",
-    "db:migrate": "node server/migrate.js"
+    "format:check": "prettier --check \"src/**/*.{js,jsx,css}\"",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2",
-    "bcryptjs": "^3.0.3",
-    "cors": "^2.8.6",
-    "dotenv": "^17.4.2",
-    "express": "^5.2.1",
     "framer-motion": "^12.42.2",
-    "jsonwebtoken": "^9.0.3",
     "lucide-react": "^1.23.0",
     "material-symbols": "^0.35.0",
-    "pg": "^8.22.0",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7",
-    "ws": "^8.21.0"
+    "react-dom": "^19.2.7"
   },
   "devDependencies": {
     "@emnapi/core": "^1.11.2",
@@ -46,7 +35,6 @@
     "@testing-library/react": "^16.3.2",
     "@vitejs/plugin-react": "^6.0.3",
     "@vitest/coverage-v8": "^4.1.10",
-    "concurrently": "^9.2.4",
     "eslint": "^9.31.0",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.1.1",
