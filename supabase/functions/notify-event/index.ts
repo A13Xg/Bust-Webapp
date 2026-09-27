@@ -6,6 +6,7 @@
  * a retry (or a race with the cron backstop) a no-op rather than a duplicate.
  */
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import type { Database } from '../_shared/database.types.ts';
 import { announceAchievement, announceBust } from '../_shared/announce.ts';
 import { corsHeaders, json } from '../_shared/push.ts';
 
@@ -23,7 +24,7 @@ const MAX_EVENT_AGE_MS = 15 * 60 * 1000;
 const RATE_WINDOW_MS = 5 * 60 * 1000;
 const RATE_MAX_EVENTS = 12;
 
-async function overRateLimit(admin: SupabaseClient, userId: string) {
+async function overRateLimit(admin: SupabaseClient<Database>, userId: string) {
   const since = new Date(Date.now() - RATE_WINDOW_MS).toISOString();
   const { count, error } = await admin
     .from('push_events')
@@ -40,7 +41,7 @@ async function overRateLimit(admin: SupabaseClient, userId: string) {
   return (count ?? 0) >= RATE_MAX_EVENTS;
 }
 
-Deno.serve(async req => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') return json(405, { error: 'Method not allowed' });
 
@@ -53,7 +54,7 @@ Deno.serve(async req => {
     const authorization = req.headers.get('Authorization');
     if (!authorization) return json(401, { error: 'Authentication required' });
 
-    const authClient = createClient(supabaseUrl, anonKey, {
+    const authClient = createClient<Database>(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authorization } },
       auth: { persistSession: false },
     });
@@ -66,7 +67,7 @@ Deno.serve(async req => {
     const id = typeof payload?.id === 'string' ? payload.id : '';
     if (!kind || !id) return json(400, { error: 'Expected { kind: "bust" | "achievement", id }' });
 
-    const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+    const admin = createClient<Database>(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
 
     // Busts are exempt: the cooldown trigger already bounds them, and a bust is
     // the one notification that must never be dropped as collateral from an

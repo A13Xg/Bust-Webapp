@@ -10,6 +10,7 @@
  * with the browser, so the server and the client agree on when a nag is due.
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import type { Database } from '../_shared/database.types.ts';
 import { fetchAllPages } from '../../../src/fetchAllPages.js';
 import {
   isInactivityReminderDue,
@@ -21,7 +22,7 @@ import { authorizeCron, corsHeaders, json, sendToSubscriptions } from '../_share
 
 const BATCH_SIZE = 200;
 
-Deno.serve(async req => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') return json(405, { error: 'Method not allowed' });
 
@@ -31,7 +32,7 @@ Deno.serve(async req => {
     if (!supabaseUrl || !serviceRoleKey) throw new Error('Supabase function environment is incomplete');
     if (!authorizeCron(req, serviceRoleKey)) return json(401, { error: 'Unauthorized' });
 
-    const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+    const admin = createClient<Database>(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
     const now = Date.now();
 
     const profiles = await fetchAllPages(
@@ -42,7 +43,7 @@ Deno.serve(async req => {
           .not('last_bust_timestamp', 'is', null)
           .order('id', { ascending: true })
           .range(from, to),
-      BATCH_SIZE
+      BATCH_SIZE,
     );
 
     let sentCount = 0;
@@ -67,13 +68,16 @@ Deno.serve(async req => {
         // devices each would silently skip the tail — the same failure
         // subscriptionsForCrew was fixed for.
         fetchAllPages((from: number, to: number) =>
-          admin.from('push_subscriptions').select('id,user_id,endpoint,p256dh,auth').in('user_id', userIds).range(from, to)
+          admin.from('push_subscriptions').select('id,user_id,endpoint,p256dh,auth').in('user_id', userIds).range(
+            from,
+            to,
+          )
         ) as Promise<Array<{ id: number; user_id: string; endpoint: string; p256dh: string; auth: string }>>,
       ]);
       if (statesResult.error) throw new Error(statesResult.error.message);
 
       const stateByUser = new Map(
-        (statesResult.data || []).map(state => [
+        (statesResult.data || []).map((state) => [
           state.user_id,
           {
             cycleBustAt: state.cycle_bust_at,
@@ -81,15 +85,18 @@ Deno.serve(async req => {
             lastSentAt: state.last_sent_at,
             lastMessageIndex: state.last_message_index,
           },
-        ])
+        ]),
       );
-      const subscriptionsByUser = new Map<string, Array<{ id: number; user_id: string; endpoint: string; p256dh: string; auth: string }>>();
+      const subscriptionsByUser = new Map<
+        string,
+        Array<{ id: number; user_id: string; endpoint: string; p256dh: string; auth: string }>
+      >();
       for (const sub of subscriptionRows) {
         if (!subscriptionsByUser.has(sub.user_id)) subscriptionsByUser.set(sub.user_id, []);
         subscriptionsByUser.get(sub.user_id)?.push(sub);
       }
 
-      const upserts: Array<Record<string, unknown>> = [];
+      const upserts: Database['public']['Tables']['inactivity_reminders']['Insert'][] = [];
 
       for (const profile of batch) {
         const subscriptions = subscriptionsByUser.get(profile.id) || [];
@@ -117,7 +124,7 @@ Deno.serve(async req => {
             },
             // Outliving one dispatch interval is pointless for a nag. The
             // reminder is self-addressed, so the user is their own actor.
-            { ttlSeconds: 6 * 60 * 60, actorId: profile.id }
+            { ttlSeconds: 6 * 60 * 60, actorId: profile.id },
           );
           prunedSubscriptions += result.pruned;
           // Advance the cycle on any attempt, delivered or not. Leaving a failed

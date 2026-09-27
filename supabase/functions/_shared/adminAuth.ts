@@ -18,6 +18,7 @@
  * forgets the secret fails closed to one account rather than open to everyone.
  */
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import type { Database } from './database.types.ts';
 
 const DEFAULT_ADMIN_HASHES = ['c796c9789455782ec850c0fe2d0e843efd7f27d31b8c1623298ecb8b91e77d0a'];
 
@@ -25,7 +26,7 @@ export function adminAllowlist() {
   const raw = Deno.env.get('BROADCAST_ADMINS') || '';
   const entries = raw
     .split(',')
-    .map(entry => entry.trim().toLowerCase())
+    .map((entry) => entry.trim().toLowerCase())
     .filter(Boolean);
   return entries.length ? entries : DEFAULT_ADMIN_HASHES;
 }
@@ -33,7 +34,7 @@ export function adminAllowlist() {
 export async function sha256Hex(value: string) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
   return Array.from(new Uint8Array(digest))
-    .map(byte => byte.toString(16).padStart(2, '0'))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('');
 }
 
@@ -43,14 +44,14 @@ export async function isAllowedAdmin(userId: string, username: string | null) {
   // digest of the empty string match every profile that has no username.
   const identifiers = [String(username || '').trim(), String(userId || '').trim()]
     .filter(Boolean)
-    .map(value => value.toLowerCase());
+    .map((value) => value.toLowerCase());
   for (const identifier of identifiers) {
     if (list.includes(await sha256Hex(identifier))) return true;
   }
   return false;
 }
 
-export type AdminContext = { admin: SupabaseClient; senderId: string; senderName: string | null };
+export type AdminContext = { admin: SupabaseClient<Database>; senderId: string; senderName: string | null };
 
 /**
  * Authenticate the caller and confirm they are on the allowlist.
@@ -60,7 +61,7 @@ export type AdminContext = { admin: SupabaseClient; senderId: string; senderName
  */
 export async function requireAdmin(
   req: Request,
-  json: (status: number, body: unknown) => Response
+  json: (status: number, body: unknown) => Response,
 ): Promise<{ denied: Response; context?: never } | { denied?: never; context: AdminContext }> {
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
@@ -70,7 +71,7 @@ export async function requireAdmin(
   const authorization = req.headers.get('Authorization');
   if (!authorization) return { denied: json(401, { error: 'Authentication required' }) };
 
-  const authClient = createClient(supabaseUrl, anonKey, {
+  const authClient = createClient<Database>(supabaseUrl, anonKey, {
     global: { headers: { Authorization: authorization } },
     auth: { persistSession: false },
   });
@@ -78,7 +79,7 @@ export async function requireAdmin(
   if (authError || !authData.user) return { denied: json(401, { error: 'Authentication required' }) };
   const senderId = authData.user.id;
 
-  const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+  const admin = createClient<Database>(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
   const { data: profile } = await admin.from('profiles').select('username').eq('id', senderId).maybeSingle();
   const senderName = profile?.username || null;
 

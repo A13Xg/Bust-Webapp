@@ -8,6 +8,7 @@
 import { fetchAllPages } from '../../../src/fetchAllPages.js';
 import webpush from 'npm:web-push@3.6.7';
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import type { Database } from './database.types.ts';
 
 export const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -74,12 +75,12 @@ export type DeliveryResult = {
 };
 
 export async function sendToSubscriptions(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   subscriptions: PushSubscriptionRow[],
   // A function instead of a payload renders per recipient, which is what lets a
   // broadcast address each person by their own name in one pass.
   payload: PushPayload | ((subscription: PushSubscriptionRow) => PushPayload),
-  { ttlSeconds = 60 * 60 * 12, actorId = null }: { ttlSeconds?: number; actorId?: string | null } = {}
+  { ttlSeconds = 60 * 60 * 12, actorId = null }: { ttlSeconds?: number; actorId?: string | null } = {},
 ): Promise<DeliveryResult> {
   configureVapid();
   const perSubscription = typeof payload === 'function' ? payload : null;
@@ -97,7 +98,7 @@ export async function sendToSubscriptions(
   const ackUrl = `${Deno.env.get('SUPABASE_URL') || ''}/functions/v1/ack-push`;
 
   const outcomes = await Promise.all(
-    subscriptions.map(async sub => {
+    subscriptions.map(async (sub) => {
       const receiptId = crypto.randomUUID();
       const base = sharedPayload ?? perSubscription!(sub);
       const body = JSON.stringify({ ...base, data: { ...(base.data || {}), receiptId, ackUrl } });
@@ -106,13 +107,13 @@ export async function sendToSubscriptions(
           { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
           body,
           // "high" urgency keeps iOS from batching crew alerts into oblivion.
-          { TTL: ttlSeconds, urgency: 'high' }
+          { TTL: ttlSeconds, urgency: 'high' },
         );
         return { sub, ok: true as const, receiptId, title: base.title || '', kind: base.kind || 'push' };
       } catch (error) {
         return { sub, ok: false as const, error };
       }
-    })
+    }),
   );
 
   // Log what the push services accepted. Best-effort on purpose: this is
@@ -123,10 +124,10 @@ export async function sendToSubscriptions(
   // for reading: an ack proves one ENDPOINT is alive, and a user has several.
   // Without it a confirmed delivery to a working laptop would vouch for a dead
   // phone on the same account.
-  const accepted = outcomes.filter(outcome => outcome.ok);
+  const accepted = outcomes.filter((outcome) => outcome.ok);
   if (accepted.length) {
     const { error } = await admin.from('push_deliveries').insert(
-      accepted.map(outcome => ({
+      accepted.map((outcome) => ({
         receipt_id: outcome.receiptId,
         batch_id: batchId,
         kind: outcome.kind,
@@ -135,7 +136,7 @@ export async function sendToSubscriptions(
         recipient_id: outcome.sub.user_id,
         title: outcome.title,
         sent_at: nowIso,
-      }))
+      })),
     );
     if (error) console.error('[push] delivery log insert failed', error.message);
   }
@@ -192,9 +193,9 @@ export async function sendToSubscriptions(
 
 /** Every subscription belonging to anyone other than `excludeUserId`. */
 export async function subscriptionsForCrew(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   excludeUserId: string | null,
-  targetUserIds: string[] | null = null
+  targetUserIds: string[] | null = null,
 ) {
   // Paginated: PostgREST caps an unranged select at 1000 rows, which would have
   // silently delivered to the first 1000 endpoints and reported that count as
@@ -213,10 +214,10 @@ export async function subscriptionsForCrew(
  * safe to run concurrently.
  */
 export async function claimPushEvent(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   kind: 'bust' | 'achievement',
   sourceId: string,
-  actorId: string | null
+  actorId: string | null,
 ) {
   const { data, error } = await admin
     .from('push_events')
@@ -236,15 +237,15 @@ export async function claimPushEvent(
  * Without this, any error between claiming and sending silently and permanently
  * suppresses that notification.
  */
-export async function releasePushEvent(admin: SupabaseClient, eventId: number) {
+export async function releasePushEvent(admin: SupabaseClient<Database>, eventId: number) {
   const { error } = await admin.from('push_events').delete().eq('id', eventId);
   if (error) console.error('[push] could not release claim', eventId, error.message);
 }
 
 export async function finishPushEvent(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   eventId: number,
-  result: DeliveryResult
+  result: DeliveryResult,
 ) {
   await admin
     .from('push_events')

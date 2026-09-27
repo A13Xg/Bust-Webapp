@@ -14,9 +14,10 @@
  * instead cascades the profile away with it, and frees the name for reuse.
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import type { Database } from '../_shared/database.types.ts';
 import { corsHeaders, json } from '../_shared/push.ts';
 
-Deno.serve(async req => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') return json(405, { error: 'Method not allowed' });
 
@@ -29,7 +30,7 @@ Deno.serve(async req => {
     const authorization = req.headers.get('Authorization');
     if (!authorization) return json(401, { error: 'Authentication required' });
 
-    const authClient = createClient(supabaseUrl, anonKey, {
+    const authClient = createClient<Database>(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authorization } },
       auth: { persistSession: false },
     });
@@ -40,7 +41,7 @@ Deno.serve(async req => {
     // there is no target to tamper with.
     const userId = authData.user.id;
 
-    const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+    const admin = createClient<Database>(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
     const { data: profile } = await admin.from('profiles').select('username').eq('id', userId).maybeSingle();
 
     const { error } = await admin.auth.admin.deleteUser(userId);

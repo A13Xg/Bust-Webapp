@@ -7,16 +7,17 @@
  * double-announcing the same row.
  */
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import type { Database } from './database.types.ts';
 import { achievements } from '../../../src/rules.js';
 import { buildAchievementNotification, buildBustNotification } from '../../../src/notificationMessages.js';
 import { achievementSlotId } from '../../../src/pushCooldown.js';
 import {
   claimPushEvent,
+  type DeliveryResult,
   finishPushEvent,
   releasePushEvent,
   sendToSubscriptions,
   subscriptionsForCrew,
-  type DeliveryResult,
 } from './push.ts';
 
 const achievementById = new Map(achievements.map((item: { id: string }) => [item.id, item]));
@@ -32,10 +33,10 @@ export type AnnounceOutcome =
  * cooldown lapsed — turning the cap into a delay.
  */
 async function claimWithoutSending(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   kind: 'bust' | 'achievement',
   sourceId: string,
-  actorId: string
+  actorId: string,
 ) {
   const eventId = await claimPushEvent(admin, kind, sourceId, actorId);
   if (eventId != null) {
@@ -65,10 +66,10 @@ const BURST_WINDOW_MS = 2 * 60 * 1000;
  * thing the sweep checks.
  */
 async function retireUnannouncedSiblings(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   actorId: string,
   anchorUnlockedAt: string | null | undefined,
-  announcedId: string
+  announcedId: string,
 ) {
   const anchor = anchorUnlockedAt ? new Date(anchorUnlockedAt).getTime() : Date.now();
   if (!Number.isFinite(anchor)) return;
@@ -89,13 +90,13 @@ async function retireUnannouncedSiblings(
   }
 }
 
-async function usernameFor(admin: SupabaseClient, userId: string) {
+async function usernameFor(admin: SupabaseClient<Database>, userId: string) {
   const { data } = await admin.from('profiles').select('username').eq('id', userId).maybeSingle();
   return data?.username || 'Someone';
 }
 
 async function announce(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   kind: 'bust' | 'achievement',
   sourceId: string,
   actorId: string,
@@ -103,7 +104,7 @@ async function announce(
   // A cooldown slot held on the caller's behalf. Released alongside the row's own
   // claim if the send fails, so one transient failure does not burn the whole
   // window and lock the backstop out of retrying.
-  slotEventId: number | null = null
+  slotEventId: number | null = null,
 ): Promise<AnnounceOutcome> {
   const eventId = await claimPushEvent(admin, kind, sourceId, actorId);
   if (eventId == null) {
@@ -118,7 +119,9 @@ async function announce(
       return { status: 'no-recipients', kind, sourceId };
     }
 
-    const result = await sendToSubscriptions(admin, subscriptions, { ...payload, data: { kind, sourceId } }, { actorId });
+    const result = await sendToSubscriptions(admin, subscriptions, { ...payload, data: { kind, sourceId } }, {
+      actorId,
+    });
     await finishPushEvent(admin, eventId, result);
     return { status: 'sent', kind, sourceId, result };
   } catch (error) {
@@ -134,9 +137,9 @@ async function announce(
 }
 
 export async function announceBust(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   bust: { id: string; user_id: string; note?: string | null; city?: string | null },
-  username?: string
+  username?: string,
 ) {
   const name = username || (await usernameFor(admin, bust.user_id));
   const payload = buildBustNotification({
@@ -149,9 +152,9 @@ export async function announceBust(
 }
 
 export async function announceAchievement(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   achievement: { id: string; user_id: string; achievement_type: string; unlocked_at?: string | null },
-  username?: string
+  username?: string,
 ) {
   const meta = achievementById.get(achievement.achievement_type) as
     | { name?: string; tier?: string }
@@ -172,7 +175,7 @@ export async function announceAchievement(
     admin,
     'achievement',
     achievementSlotId(achievement.user_id, Date.now()),
-    achievement.user_id
+    achievement.user_id,
   );
   if (slotEventId == null) {
     await claimWithoutSending(admin, 'achievement', achievement.id, achievement.user_id);

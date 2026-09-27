@@ -10,13 +10,14 @@
  * notification is noise, not news.
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import type { Database } from '../_shared/database.types.ts';
 import { announceAchievement, announceBust } from '../_shared/announce.ts';
 import { authorizeCron, corsHeaders, json } from '../_shared/push.ts';
 
 const LOOKBACK_MS = 60 * 60 * 1000;
 const MAX_EVENTS_PER_RUN = 50;
 
-Deno.serve(async req => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') return json(405, { error: 'Method not allowed' });
 
@@ -26,7 +27,7 @@ Deno.serve(async req => {
     if (!supabaseUrl || !serviceRoleKey) throw new Error('Supabase function environment is incomplete');
     if (!authorizeCron(req, serviceRoleKey)) return json(401, { error: 'Unauthorized' });
 
-    const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+    const admin = createClient<Database>(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
     const since = new Date(Date.now() - LOOKBACK_MS).toISOString();
 
     const [bustsResult, achievementsResult, ledgerResult] = await Promise.all([
@@ -50,7 +51,7 @@ Deno.serve(async req => {
     if (achievementsResult.error) throw new Error(achievementsResult.error.message);
     if (ledgerResult.error) throw new Error(ledgerResult.error.message);
 
-    const announced = new Set((ledgerResult.data || []).map(row => `${row.kind}:${row.source_id}`));
+    const announced = new Set((ledgerResult.data || []).map((row) => `${row.kind}:${row.source_id}`));
     const summary = { busts: 0, achievements: 0, delivered: 0, skipped: 0 };
 
     for (const bust of bustsResult.data || []) {
