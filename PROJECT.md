@@ -279,11 +279,12 @@ One-time Supabase setup: Authentication → Sign In/Up → **disable Confirm ema
 
 | Command | Covers |
 | --- | --- |
-| `npm run lint` | `src/`, `server/`, `scripts/`, `public/sw.js` |
+| `npm run lint` | `src/`, `public/sw.js` |
 | `npm run format:check` | prettier — **runs in CI, will fail the build** |
 | `npm run typecheck` | browser app (`tsc --noEmit`) |
 | `npm run lint:functions` | `supabase/functions/` (`deno lint`) |
 | `npm run typecheck:functions` | `supabase/functions/` (`deno check`, strict) |
+| `npm run test:functions` | `supabase/functions/_shared/*.test.ts` (`deno test`) |
 | `npm test` | vitest |
 
 Edge Functions are Deno TypeScript and invisible to eslint/tsc. Because they
@@ -292,8 +293,19 @@ JSDoc annotations — those are **load-bearing**: drop them and callbacks in
 `fetchAllPages` land as implicit `any`. A PostgREST builder is a *thenable*, not
 a `Promise`, so callback types must be `PromiseLike`.
 
-**Nothing executes the Edge Functions in CI.** Type-checking will not catch a
-wrong table name or a broken RLS assumption.
+Every `createClient(...)` call and `SupabaseClient` annotation in
+`supabase/functions/` is typed against `_shared/database.types.ts`, generated
+from the linked project (`supabase gen types typescript --linked` — regenerate
+after any schema change). Without it `.from('any_string_here')` type-checks
+fine even against a nonexistent table; with it, a wrong table/column name or a
+bad `.rpc()` signature fails `typecheck:functions` instead of shipping.
+
+**Still nothing executes the Edge Functions end-to-end in CI.** `test:functions`
+covers the genuinely unit-testable shared logic (claim/release ordering,
+`isGoneError` classification, filter-building) with hand-rolled fake clients —
+it does not exercise real RLS policies, Postgres triggers, or auth. Closing
+that gap needs a `supabase start` (Docker) based integration job — a bigger
+lift (throwaway VAPID keys, synthetic auth users) not attempted here.
 
 Local SQL against production (the CLI is authenticated, project linked):
 
@@ -362,11 +374,13 @@ Sign-ups require the invite code `bust4me` (compared case-insensitively).
 
 ## 11. Known gaps
 
-- No CI execution of Edge Functions; a wrong table name ships.
-- Server mode (`server/`) is unused in practice but still tested and still
-  maintained by CI. A candidate for removal.
-- `busts` has both `time_bucket` (stored) and a derivable bucket from
-  `timestamp`; `derivePersonalStats` prefers the stored one and falls back.
-- `profiles` carries a redundant case-sensitive `username` unique constraint
-  alongside the `lower(username)` index that actually defines identity.
+- Edge Functions are typed and unit-tested (see §8), but nothing runs them
+  end-to-end in CI against real RLS/triggers/auth. A `supabase start`
+  (Docker) integration job is the remaining follow-up.
 - `charts.jsx` is at ~30% test coverage; it is presentational.
+
+Closed since 2026-09-27: server mode (`server/`) removed (dead weight, see
+§2); `profiles`' redundant case-sensitive `username` constraint dropped
+(migration `20260927222401`); `busts.time_bucket`'s dead client-side fallback
+removed; Edge Functions' Supabase clients typed against the schema and their
+shared push/announce logic unit-tested.
