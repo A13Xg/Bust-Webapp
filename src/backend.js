@@ -41,6 +41,9 @@ const serverBackend = {
   async notifyEvent() { return { ok: false, reason: 'unsupported_in_server_mode' }; },
   async broadcastTestNotification() { return { ok: false, reason: 'unsupported_in_server_mode' }; },
   async adminSetPassword() { return { ok: false, reason: 'unsupported_in_server_mode' }; },
+  async getDiscordSettings() { return { ok: false, reason: 'unsupported_in_server_mode' }; },
+  async updateDiscordSettings() { return { ok: false, reason: 'unsupported_in_server_mode' }; },
+  async sendDiscordTestMessage() { return { ok: false, reason: 'unsupported_in_server_mode' }; },
   webPushPublicKey() { return WEB_PUSH_PUBLIC_KEY; },
   async patchProfile(patch) { return (await rest('/profile', { method: 'PATCH', body: JSON.stringify(patch) })).user; },
   subscribe({ onBust, onProfile, onStatus }) {
@@ -294,6 +297,43 @@ const staticBackend = {
     if (error) {
       const detail = await readFunctionError(error);
       throw new Error(detail || error.message || 'Password update failed');
+    }
+    if (data?.error) throw new Error(data.error);
+    return data || { ok: true };
+  },
+  /* Debug-menu only: read the Discord webhook configuration (enable switches,
+   * templates, colors, mention content). Admin-gated server-side. */
+  async getDiscordSettings() {
+    const sb = await getSupa();
+    const { data, error } = await sb.functions.invoke('admin-discord-settings', { body: { action: 'get' } });
+    if (error) {
+      const detail = await readFunctionError(error);
+      throw new Error(detail || error.message || 'Could not load Discord settings');
+    }
+    if (data?.error) throw new Error(data.error);
+    return data || { ok: true, settings: null, defaults: null };
+  },
+  /* Debug-menu only: patch one or more fields of the Discord webhook config. */
+  async updateDiscordSettings(patch = {}) {
+    const sb = await getSupa();
+    const { data, error } = await sb.functions.invoke('admin-discord-settings', { body: { action: 'update', patch } });
+    if (error) {
+      const detail = await readFunctionError(error);
+      throw new Error(detail || error.message || 'Could not update Discord settings');
+    }
+    if (data?.error) throw new Error(data.error);
+    return data || { ok: true };
+  },
+  /* Debug-menu only: fire a sample bust or achievement embed at the configured
+   * webhook, optionally previewing unsaved settings before they are persisted. */
+  async sendDiscordTestMessage({ kind, settings } = {}) {
+    const sb = await getSupa();
+    const { data, error } = await sb.functions.invoke('discord-test-notification', {
+      body: { kind: kind === 'achievement' ? 'achievement' : 'bust', settings: settings || undefined },
+    });
+    if (error) {
+      const detail = await readFunctionError(error);
+      throw new Error(detail || error.message || 'Discord test send failed');
     }
     if (data?.error) throw new Error(data.error);
     return data || { ok: true };

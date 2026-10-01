@@ -16,6 +16,17 @@
  *
  * So the UI offers RETRY exactly when `isRetryable` says so, and otherwise
  * shows a dead end with a pointer at site settings.
+ *
+ * iOS note: on a PWA installed to the Home Screen, WebKit does not persist a
+ * granted geolocation permission across launches/calls the way it does for
+ * the same site open as a normal Safari tab — the installed app runs in a more
+ * tightly sandboxed context that forgets the grant, so `requestLocation()` can
+ * legitimately re-prompt on every bust even after the user already said yes.
+ * Researched (see PROJECT.md §12 "Known gaps"): this is a widely reported
+ * iOS/WebKit limitation with no documented fix or workaround from the web
+ * platform side, and is treated by Apple as intentional sandboxing rather than
+ * a defect. Nothing below is broken; `isRetryable`/`outcomeHint` already treat
+ * every call as one that may need to re-prompt.
  */
 
 export const GEO_TIMEOUT_MS = 15000;

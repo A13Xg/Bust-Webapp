@@ -1,15 +1,19 @@
 /*
- * Turns a bust or achievement row into a crew-wide push, exactly once.
+ * Turns a bust or achievement row into a crew-wide push AND a Discord webhook
+ * message, exactly once each.
  *
  * Both callers share this: `notify-event` (the busting client, for instant
  * delivery) and `dispatch-push-backstop` (the scheduled sweep, for when that
  * client never made the call). The push_events ledger is what keeps them from
- * double-announcing the same row.
+ * double-announcing the same row for push; `discord_events` (see
+ * `_shared/discord.ts`) does the same job for Discord, independently, since
+ * Discord delivery is not subject to push's cooldown/slot pacing.
  */
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { achievements } from '../../../src/rules.js';
 import { buildAchievementNotification, buildBustNotification } from '../../../src/notificationMessages.js';
 import { achievementSlotId } from '../../../src/pushCooldown.js';
+import { sendDiscordNotification } from './discord.ts';
 import {
   claimPushEvent,
   finishPushEvent,
@@ -145,7 +149,20 @@ export async function announceBust(
     bustId: bust.id,
     city: bust.city,
   });
-  return announce(admin, 'bust', bust.id, bust.user_id, payload);
+  const outcome = await announce(admin, 'bust', bust.id, bust.user_id, payload);
+  // Independent of the push outcome above (sent, no-recipients, duplicate —
+  // all mean "this bust happened"): Discord gets its own exactly-once ledger,
+  // see _shared/discord.ts.
+  await sendDiscordNotification(admin, 'bust', {
+    sourceId: bust.id,
+    actorId: bust.user_id,
+    username: name,
+    note: bust.note,
+    city: bust.city,
+    pushTitle: payload.title,
+    pushBody: payload.body,
+  });
+  return outcome;
 }
 
 export async function announceAchievement(
@@ -154,19 +171,41 @@ export async function announceAchievement(
   username?: string
 ) {
   const meta = achievementById.get(achievement.achievement_type) as
-    | { name?: string; tier?: string }
+    | { name?: string; tier?: string; points?: number; accent?: string }
     | undefined;
   // An id outside the catalog means stale or hand-written data. Claim it anyway
   // so the scheduled sweep evaluates it once rather than on every run for the
-  // whole lookback window, then decline to announce it.
+  // whole lookback window, then decline to announce it (nothing meaningful to
+  // show on Discord either, since there is no catalog name/tier to display).
   if (!meta) {
     await claimWithoutSending(admin, 'achievement', achievement.id, achievement.user_id);
     return { status: 'unknown' as const, kind: 'achievement', sourceId: achievement.id };
   }
 
-  // One achievement push per actor per cooldown window. Claiming the slot is
-  // what makes this safe under concurrency: the client fires its announcements
-  // in parallel, so a read-then-check would let a whole burst through. The
+  const name = username || (await usernameFor(admin, achievement.user_id));
+  const payload = buildAchievementNotification({
+    username: name,
+    achievementName: meta.name,
+    achievementId: achievement.achievement_type,
+    tier: meta.tier,
+  });
+  const discordContext = {
+    sourceId: achievement.id,
+    actorId: achievement.user_id,
+    username: name,
+    achievementName: meta.name,
+    tier: meta.tier,
+    points: meta.points,
+    accent: meta.accent,
+    pushTitle: payload.title,
+    pushBody: payload.body,
+  };
+
+  // One achievement PUSH per actor per cooldown window — a lock-screen pacing
+  // rule that has nothing to do with Discord, so a suppressed slot still gets
+  // its own Discord message below. Claiming the slot is what makes the push
+  // side safe under concurrency: the client fires its announcements in
+  // parallel, so a read-then-check would let a whole burst through. The
   // unique index on (kind, source_id) arbitrates instead.
   const slotEventId = await claimPushEvent(
     admin,
@@ -176,18 +215,13 @@ export async function announceAchievement(
   );
   if (slotEventId == null) {
     await claimWithoutSending(admin, 'achievement', achievement.id, achievement.user_id);
+    await sendDiscordNotification(admin, 'achievement', discordContext);
     return { status: 'suppressed' as const, kind: 'achievement', sourceId: achievement.id };
   }
   await finishPushEvent(admin, slotEventId, { attempted: 0, delivered: 0, pruned: 0, failures: [] });
 
-  const name = username || (await usernameFor(admin, achievement.user_id));
-  const payload = buildAchievementNotification({
-    username: name,
-    achievementName: meta.name,
-    achievementId: achievement.achievement_type,
-    tier: meta.tier,
-  });
   const outcome = await announce(admin, 'achievement', achievement.id, achievement.user_id, payload, slotEventId);
+  await sendDiscordNotification(admin, 'achievement', discordContext);
 
   // Only after a send actually went out. On 'failed' the claim was released so
   // the sweep can retry this row, and retiring its siblings then would throw

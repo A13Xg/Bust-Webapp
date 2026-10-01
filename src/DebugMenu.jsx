@@ -8,13 +8,14 @@
  * Lifted out of main.jsx when it grew tabs; it was the single largest component
  * in that file and none of it is needed on the dashboard's critical path.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, X } from 'lucide-react';
 
 import { achievements } from './rules.js';
 import { backend } from './backend.js';
 import { describeTokens, renderBroadcast, unknownTokens } from './broadcastTemplate.js';
+import { describeDiscordTokens } from './discordTemplate.js';
 import { summarizeDeliveries } from './pushDeliveryReport.js';
 import { MIcon, matMap } from './badgeIcons.jsx';
 import { detectPushPlatform, getNotificationPermission } from './notifications.js';
@@ -25,6 +26,7 @@ const TABS = [
   { id: 'bust', label: 'BUST' },
   { id: 'progress', label: 'PROGRESS' },
   { id: 'notify', label: 'NOTIFY' },
+  { id: 'discord', label: 'DISCORD' },
   { id: 'delivery', label: 'DELIVERY' },
   { id: 'device', label: 'DEVICE' },
   { id: 'accounts', label: 'ACCOUNTS' },
@@ -632,6 +634,262 @@ function AccountsTab({ users }) {
   );
 }
 
+/* -------------------------------- Discord tab ------------------------------ */
+
+/*
+ * Configures the Discord webhook integration: on/off switches, the webhook URL
+ * (falls back to the DISCORD_WEBHOOK_URL Edge Function secret when left
+ * blank), bot identity, colors, templates, and an optional role/@everyone
+ * mention. Admin-gated server-side by `admin-discord-settings`/
+ * `discord-test-notification`, the same allowlist as every other admin action
+ * here — see _shared/adminAuth.ts.
+ *
+ * Templates use the {{TOKEN}} syntax from src/discordTemplate.js, which is its
+ * own token set — distinct from the crew-broadcast tokens above, since a
+ * Discord message is rendered once per EVENT rather than once per recipient.
+ */
+const DISCORD_FIELDS = [
+  { key: 'bust_title_template', label: 'Bust — title template', placeholder: '💥 {{PUSH_TITLE}}' },
+  { key: 'bust_description_template', label: 'Bust — description template', placeholder: '{{PUSH_BODY}}', area: true },
+  { key: 'achievement_title_template', label: 'Achievement — title template', placeholder: '🏆 {{PUSH_TITLE}}' },
+  {
+    key: 'achievement_description_template',
+    label: 'Achievement — description template',
+    placeholder: '{{PUSH_BODY}}',
+    area: true,
+  },
+];
+
+function DiscordTab() {
+  const [settings, setSettings] = useState(null);
+  const [load, setLoad] = useState({ status: 'loading', message: '' });
+  const [save, setSave] = useState({ status: 'idle', message: '' });
+  const [test, setTest] = useState({ status: 'idle', message: '' });
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await backend.getDiscordSettings();
+        if (cancelled) return;
+        if (!result?.ok) {
+          setLoad({ status: 'error', message: result?.error || result?.reason || 'Could not load Discord settings' });
+          return;
+        }
+        setSettings({ ...(result.defaults || {}), ...(result.settings || {}) });
+        setLoad({ status: 'ok', message: '' });
+      } catch (error) {
+        if (!cancelled) setLoad({ status: 'error', message: error.message || 'Could not load Discord settings' });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const patchField = (key, value) => setSettings(prev => ({ ...prev, [key]: value }));
+
+  async function persist() {
+    setSave({ status: 'saving', message: '' });
+    try {
+      const result = await backend.updateDiscordSettings(settings);
+      if (!result?.ok) {
+        setSave({ status: 'error', message: result?.error || result?.reason || 'Save failed' });
+        return;
+      }
+      setSettings(prev => ({ ...prev, ...(result.settings || {}) }));
+      setSave({ status: 'ok', message: 'Saved.' });
+    } catch (error) {
+      setSave({ status: 'error', message: error.message || 'Save failed' });
+    }
+  }
+
+  async function sendTest(kind) {
+    setTest({ status: 'sending', message: '' });
+    try {
+      const result = await backend.sendDiscordTestMessage({ kind, settings });
+      if (!result?.ok) {
+        setTest({ status: 'error', message: result?.error || result?.reason || 'Test send failed' });
+        return;
+      }
+      setTest({ status: 'ok', message: `Test ${kind} embed sent.` });
+    } catch (error) {
+      setTest({ status: 'error', message: error.message || 'Test send failed' });
+    }
+  }
+
+  if (load.status === 'loading') {
+    return (
+      <div className="debug-panel">
+        <p className="showcase-hint">Loading Discord settings…</p>
+      </div>
+    );
+  }
+  if (load.status === 'error' || !settings) {
+    return (
+      <div className="debug-panel">
+        <p className="broadcast-warn">{load.message || 'Could not load Discord settings.'}</p>
+        <p className="showcase-hint">This tab is only usable by an allowlisted admin account.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="debug-panel">
+      <p className="showcase-hint">
+        Mirrors every bust and every achievement into a Discord channel via an incoming webhook. Idle/inactivity nags
+        never go to Discord. Leave the webhook URL blank to use the <code>DISCORD_WEBHOOK_URL</code> secret instead.
+      </p>
+
+      <label className="recipient-toggle">
+        <input type="checkbox" checked={!!settings.enabled} onChange={e => patchField('enabled', e.target.checked)} />
+        Discord integration enabled
+      </label>
+      <label className="recipient-toggle">
+        <input
+          type="checkbox"
+          checked={settings.bust_enabled !== false}
+          onChange={e => patchField('bust_enabled', e.target.checked)}
+        />
+        Announce busts
+      </label>
+      <label className="recipient-toggle">
+        <input
+          type="checkbox"
+          checked={settings.achievement_enabled !== false}
+          onChange={e => patchField('achievement_enabled', e.target.checked)}
+        />
+        Announce achievements
+      </label>
+      <label className="recipient-toggle">
+        <input
+          type="checkbox"
+          checked={settings.include_thumbnail !== false}
+          onChange={e => patchField('include_thumbnail', e.target.checked)}
+        />
+        Show the achievement&rsquo;s tier badge as a thumbnail
+      </label>
+
+      <label className="debug-note">
+        Webhook URL (optional — overrides the server secret)
+        <input
+          value={settings.webhook_url || ''}
+          placeholder="https://discord.com/api/webhooks/…"
+          onChange={e => patchField('webhook_url', e.target.value)}
+        />
+      </label>
+
+      <div className="debug-grid">
+        <label>
+          Bot username
+          <input
+            value={settings.bot_username || ''}
+            placeholder="BUST Control"
+            maxLength={80}
+            onChange={e => patchField('bot_username', e.target.value)}
+          />
+        </label>
+        <label>
+          Bot avatar URL
+          <input
+            value={settings.bot_avatar_url || ''}
+            placeholder="https://…/bust-logo.png"
+            onChange={e => patchField('bot_avatar_url', e.target.value)}
+          />
+        </label>
+        <label>
+          Bust embed color
+          <input
+            value={settings.bust_color || ''}
+            placeholder="#5865F2"
+            maxLength={7}
+            onChange={e => patchField('bust_color', e.target.value)}
+          />
+        </label>
+        <label>
+          Achievement embed color
+          <input
+            value={settings.achievement_color || ''}
+            placeholder="Defaults to the achievement's own color"
+            maxLength={7}
+            onChange={e => patchField('achievement_color', e.target.value)}
+          />
+        </label>
+      </div>
+
+      <label className="debug-note">
+        Footer text
+        <input
+          value={settings.footer_text || ''}
+          placeholder="BUST"
+          onChange={e => patchField('footer_text', e.target.value)}
+        />
+      </label>
+      <label className="debug-note">
+        Mention content (optional)
+        <input
+          value={settings.mention_content || ''}
+          placeholder="@everyone or <@&ROLE_ID>"
+          maxLength={200}
+          onChange={e => patchField('mention_content', e.target.value)}
+        />
+      </label>
+
+      {DISCORD_FIELDS.map(({ key, label, placeholder, area }) => (
+        <label className="debug-note" key={key}>
+          {label}
+          {area ? (
+            <textarea
+              value={settings[key] || ''}
+              placeholder={placeholder}
+              onChange={e => patchField(key, e.target.value)}
+            />
+          ) : (
+            <input
+              value={settings[key] || ''}
+              placeholder={placeholder}
+              onChange={e => patchField(key, e.target.value)}
+            />
+          )}
+        </label>
+      ))}
+
+      <div className="token-sheet">
+        <span className="mf-kicker">Insertable variables</span>
+        {describeDiscordTokens().map(({ token, hint }) => (
+          <span key={token} className="token-slot">
+            <span className="token-chip" title={hint}>
+              <code>{token}</code>
+              <em>{hint}</em>
+            </span>
+          </span>
+        ))}
+      </div>
+
+      {save.status === 'error' && <p className="broadcast-warn">{save.message}</p>}
+      {save.status === 'ok' && <p className="broadcast-ok">{save.message}</p>}
+      {test.status === 'error' && <p className="broadcast-warn">{test.message}</p>}
+      {test.status === 'ok' && <p className="broadcast-ok">{test.message}</p>}
+
+      <div className="picker-actions">
+        <button className="mf-button" disabled={save.status === 'saving'} onClick={persist}>
+          {save.status === 'saving' ? 'SAVING…' : 'SAVE DISCORD SETTINGS'}
+        </button>
+        <button className="mf-button ghost" disabled={test.status === 'sending'} onClick={() => sendTest('bust')}>
+          SEND TEST BUST
+        </button>
+        <button
+          className="mf-button ghost"
+          disabled={test.status === 'sending'}
+          onClick={() => sendTest('achievement')}
+        >
+          SEND TEST ACHIEVEMENT
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ------------------------------- Debug menu ------------------------------- */
 
 export function DebugMenu({
@@ -757,6 +1015,7 @@ export function DebugMenu({
         )}
 
         {tab === 'notify' && <NotifyTab username={username} users={users} />}
+        {tab === 'discord' && <DiscordTab />}
         {tab === 'delivery' && <DeliveryTab />}
         {tab === 'device' && (
           <DeviceTab

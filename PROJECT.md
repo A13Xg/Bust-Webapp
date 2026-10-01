@@ -213,7 +213,59 @@ is signed with a key the subscription was not created for.
 
 ---
 
-## 5. Stale installs
+## 5. Discord webhook notifications
+
+Optional, off by default. Mirrors every bust and every achievement unlock into
+a Discord channel via an incoming webhook, as a rich embed (title, description,
+color, and — for achievements — the tier badge sprite as a thumbnail).
+**Idle/inactivity reminders are never sent to Discord**; `dispatch-inactivity-reminders`
+does not import this code path and never will.
+
+### Why it is separate from push
+
+Push is paced on purpose — a cooldown-bounded bust, a ten-minute achievement
+slot, a 12-per-5-minute ceiling — because it lands on a lock screen. None of
+that applies to a Discord channel, and the requirement here is literally "every
+bust, every achievement". So Discord delivery is **not** gated by any of the
+push pacing in section 4: it has its own exactly-once ledger
+(`discord_events`, the Discord analogue of `push_events`) and fires regardless
+of whether the push for the same row was sent, suppressed, or had no
+recipients.
+
+### Pieces
+
+| Piece | Role |
+| --- | --- |
+| `supabase/migrations/20260930010000_discord_webhook.sql` | `discord_settings` (singleton config row) + `discord_events` (exactly-once ledger). Both RLS-enabled with zero policies — service role only, same pattern as `push_events`. |
+| `src/discordTemplate.js` | `{{TOKEN}}` templates → Discord embed JSON. Its own token set (`{{USER}}`, `{{NOTE}}`, `{{CITY}}`, `{{TIER}}`, `{{POINTS}}`, `{{PUSH_TITLE}}`/`{{PUSH_BODY}}`, …) — distinct from the crew-broadcast tokens, because a Discord message renders once per *event*, not once per *recipient*. Shares the engine in `src/templateTokens.js` with `broadcastTemplate.js`. |
+| `supabase/functions/_shared/discord.ts` | Loads settings, builds the payload, POSTs to the webhook, claims/releases/finishes `discord_events`. `sendDiscordNotification()` never throws — a Discord outage can't take down push. |
+| `supabase/functions/_shared/announce.ts` | Calls `sendDiscordNotification()` from both `announceBust` and `announceAchievement`, so both `notify-event` (instant) and `dispatch-push-backstop` (scheduled sweep) cover Discord automatically. |
+| `supabase/functions/admin-discord-settings/` | Admin-gated (same allowlist as `admin-set-password`) read/write of `discord_settings`. |
+| `supabase/functions/discord-test-notification/` | Admin-gated: fires one sample bust/achievement embed, optionally previewing unsaved settings, so an admin can check a template before it goes live. |
+| Debug menu → **DISCORD** tab | Enable switches, webhook URL override, bot identity, colors, mention content, templates, and the two test-send buttons. |
+
+### Configuration
+
+Nothing is required for the app to keep working without Discord — `enabled`
+defaults to `false`. To turn it on:
+
+1. Discord server → **Server Settings → Integrations → Webhooks → New Webhook**, copy the URL.
+2. Either set it as the `DISCORD_WEBHOOK_URL` Edge Function secret
+   (`supabase secrets set DISCORD_WEBHOOK_URL=...`, same mechanism as
+   `VAPID_PRIVATE_KEY`), or paste it into the DISCORD tab's webhook field,
+   which overrides the secret. Optionally also set `SITE_URL` so achievement
+   embeds can link an absolute badge sprite URL (`public/badges/512/*.png`).
+3. Flip "Discord integration enabled" in the DISCORD tab, use SEND TEST BUST /
+   SEND TEST ACHIEVEMENT to confirm, then enable it for real.
+
+`DISCORD_WEBHOOK_URL` and `SITE_URL` are regular Edge Function secrets, so they
+are settable as GitHub repository secrets the same way `VAPID_PUBLIC_KEY` /
+`VAPID_PRIVATE_KEY` / `REMINDER_CRON_SECRET` are — see `.env.example` and
+section 8 (Secrets) below.
+
+---
+
+## 6. Stale installs
 
 An installed PWA is not a page you refresh — iOS keeps one document alive for
 weeks. A stale install keeps running an old push registration path, so a push fix
@@ -228,7 +280,7 @@ replaces the page.
 
 ---
 
-## 6. Debug menu
+## 7. Debug menu
 
 Long-press or right-click **DELETE ACCOUNT** in the profile overlay.
 
@@ -253,7 +305,7 @@ node -e "console.log(require('crypto').createHash('sha256').update('VALUE').dige
 
 ---
 
-## 7. Deploying
+## 8. Deploying
 
 `main` → `deploy.yml` → tests → **`supabase db push`** → deploy every Edge
 Function → build → Pages. Migrations lead functions, because a function deployed
@@ -273,7 +325,7 @@ most one per day.
 | Where | Name |
 | --- | --- |
 | GitHub Actions | `SUPABASE_ACCESS_TOKEN`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_WEB_PUSH_PUBLIC_KEY`, `SUPABASE_FUNCTIONS_URL`, `REMINDER_CRON_SECRET` |
-| Supabase functions | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `REMINDER_CRON_SECRET`, `BROADCAST_ADMINS`, optionally `VAPID_SUBJECT` |
+| Supabase functions | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `REMINDER_CRON_SECRET`, `BROADCAST_ADMINS`, optionally `VAPID_SUBJECT`, optionally `DISCORD_WEBHOOK_URL`, `SITE_URL` (section 5) |
 
 Never give a service-role or VAPID **private** key a `VITE_` prefix.
 
@@ -282,7 +334,7 @@ One-time Supabase setup: Authentication → Sign In/Up → **disable Confirm ema
 
 ---
 
-## 8. Checks
+## 9. Checks
 
 | Command | Covers |
 | --- | --- |
@@ -313,7 +365,7 @@ supabase db push --linked --yes      # --yes: it prompts otherwise
 
 ---
 
-## 9. Diagnosing a device that gets nothing
+## 10. Diagnosing a device that gets nothing
 
 1. **Debug menu → DEVICE → TEST PING THIS DEVICE.** Exercises VAPID signing, the
    push service and the worker in one round trip, scoped to that endpoint alone.
@@ -333,7 +385,7 @@ signed correctly. A 401/403 means the credentials are wrong.
 
 ---
 
-## 10. Repo map
+## 11. Repo map
 
 ```
 src/main.jsx            app shell, dashboard, overlays, bust flow
@@ -345,6 +397,9 @@ src/notificationMessages.js  copy, shared verbatim with the Edge Functions
 src/appVersion.js       stale-install detection
 src/pushCooldown.js     achievement announce slot ids
 src/inactivityReminder.js  the 5-7 day nag state machine
+src/templateTokens.js   shared {{TOKEN}} template engine
+src/broadcastTemplate.js  crew-broadcast {{TOKEN}} templates (per-recipient)
+src/discordTemplate.js  Discord webhook {{TOKEN}} templates + embed builders (per-event)
 src/DebugMenu.jsx       the debug overlay
 src/charts.jsx          SVG chart primitives
 public/sw.js            push receiver; NOT a caching worker
@@ -368,7 +423,7 @@ Sign-ups require the invite code `bust4me` (compared case-insensitively).
 
 ---
 
-## 11. Known gaps
+## 12. Known gaps
 
 - No CI execution of Edge Functions; a wrong table name ships.
 - Server mode (`server/`) is unused in practice but still tested and still
@@ -378,3 +433,15 @@ Sign-ups require the invite code `bust4me` (compared case-insensitively).
 - `profiles` carries a redundant case-sensitive `username` unique constraint
   alongside the `lower(username)` index that actually defines identity.
 - `charts.jsx` is at ~30% test coverage; it is presentational.
+- **iOS re-prompts for location on every bust when the app is installed to the
+  Home Screen.** Researched, not a bug in this codebase: iOS/WebKit does not
+  persist `navigator.geolocation` permission for a standalone (installed) PWA
+  the way it persists it for the same site open as a normal Safari tab — the
+  installed app runs in a separate, more tightly sandboxed context. This is
+  widely reported by other PWA developers (see WebKit bug 215884 and
+  Apple Developer Forums thread 694999) with no documented fix or workaround on
+  the web platform side as of this writing; Apple's own stance treats it as
+  intentional sandboxing, not a defect. `src/permissionRequests.js` already
+  treats every `requestLocation()` call as something that may re-prompt and
+  handles it (ASKING… / retry), so behaviour is correct — just, on iOS,
+  surprising. Left as-is per the above; revisit if WebKit changes this.
