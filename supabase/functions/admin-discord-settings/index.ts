@@ -15,61 +15,16 @@
  */
 import { corsHeaders, json } from '../_shared/push.ts';
 import { requireAdmin } from '../_shared/adminAuth.ts';
-import { DEFAULT_DISCORD_SETTINGS, getDiscordSettings } from '../_shared/discord.ts';
-import { hexToDiscordColor } from '../../../src/discordTemplate.js';
-
-const TEXT_FIELDS = [
-  'webhook_url',
-  'bot_username',
-  'bot_avatar_url',
-  'footer_text',
-  'bust_color',
-  'achievement_color',
-  'bust_title_template',
-  'bust_description_template',
-  'achievement_title_template',
-  'achievement_description_template',
-  'mention_content',
-] as const;
-
-const BOOLEAN_FIELDS = ['enabled', 'bust_enabled', 'achievement_enabled', 'include_thumbnail'] as const;
-
-const MAX_TEXT_LENGTH: Partial<Record<(typeof TEXT_FIELDS)[number], number>> = {
-  webhook_url: 2000,
-  bot_username: 80,
-  bot_avatar_url: 2000,
-  footer_text: 2048,
-  bust_color: 7,
-  achievement_color: 7,
-  bust_title_template: 256,
-  bust_description_template: 4096,
-  achievement_title_template: 256,
-  achievement_description_template: 4096,
-  mention_content: 200,
-};
-
-const DISCORD_WEBHOOK_RE = /^https:\/\/(discord\.com|discordapp\.com)\/api\/webhooks\/(\d+)\/([\w-]+)\/?$/;
-const WEBHOOK_TOKEN_MASK = '••••••••••••••••';
+import {
+  DEFAULT_DISCORD_SETTINGS,
+  getDiscordSettings,
+  maskDiscordSettings,
+  maskWebhookUrl,
+  validateDiscordSettingsPatch,
+} from '../_shared/discord.ts';
 
 function badRequest(message: string) {
   return json(400, { error: message });
-}
-
-/**
- * The webhook URL embeds a bearer-equivalent token: anyone who has it can
- * post to the channel. Never send the real token back to the browser — only
- * the (non-secret) numeric webhook id, with the token replaced by a fixed
- * placeholder. `settingsForClient` is what every response sends out.
- */
-function maskWebhookUrl(url: string | null): string | null {
-  if (!url) return null;
-  const match = DISCORD_WEBHOOK_RE.exec(url);
-  if (!match) return null;
-  return `https://discord.com/api/webhooks/${match[2]}/${WEBHOOK_TOKEN_MASK}`;
-}
-
-function settingsForClient(settings: Record<string, unknown>) {
-  return { ...settings, webhook_url: maskWebhookUrl((settings.webhook_url as string | null) ?? null) };
 }
 
 Deno.serve(async req => {
@@ -86,41 +41,23 @@ Deno.serve(async req => {
 
     if (action === 'get') {
       const settings = await getDiscordSettings(admin);
-      return json(200, { ok: true, settings: settingsForClient(settings), defaults: DEFAULT_DISCORD_SETTINGS });
+      return json(200, { ok: true, settings: maskDiscordSettings(settings), defaults: DEFAULT_DISCORD_SETTINGS });
     }
 
     const current = await getDiscordSettings(admin);
-    const patch = body?.patch && typeof body.patch === 'object' ? body.patch : {};
-    const update: Record<string, unknown> = {};
+    const patch = { ...(body?.patch && typeof body.patch === 'object' ? body.patch : {}) };
 
-    for (const field of BOOLEAN_FIELDS) {
-      if (field in patch) {
-        if (typeof patch[field] !== 'boolean') return badRequest(`${field} must be a boolean`);
-        update[field] = patch[field];
-      }
+    // The client only ever sees the masked form of an existing webhook_url
+    // (see `maskDiscordSettings`). Submitting that unedited placeholder back
+    // means "leave it alone" — not "set my secret to a string of bullets" —
+    // so drop it from the patch before validating/persisting anything.
+    if (patch.webhook_url != null && patch.webhook_url === maskWebhookUrl(current.webhook_url)) {
+      delete patch.webhook_url;
     }
 
-    for (const field of TEXT_FIELDS) {
-      if (!(field in patch)) continue;
-      const raw = patch[field];
-      if (raw !== null && typeof raw !== 'string') return badRequest(`${field} must be a string or null`);
-      const value = raw == null ? null : raw.trim() || null;
-
-      // The client only ever sees the masked form of an existing webhook_url
-      // (see `settingsForClient`). Submitting that unedited placeholder back
-      // means "leave it alone" — not "set my secret to a string of bullets".
-      if (field === 'webhook_url' && value && value === maskWebhookUrl(current.webhook_url)) continue;
-
-      const limit = MAX_TEXT_LENGTH[field];
-      if (value && limit && value.length > limit) return badRequest(`${field} is too long (max ${limit} characters)`);
-      if (value && (field === 'bust_color' || field === 'achievement_color') && hexToDiscordColor(value) == null) {
-        return badRequest(`${field} must be a hex color like #5865F2`);
-      }
-      if (value && field === 'webhook_url' && !DISCORD_WEBHOOK_RE.test(value)) {
-        return badRequest('webhook_url must be a discord.com/api/webhooks/... URL');
-      }
-      update[field] = value;
-    }
+    const validation = validateDiscordSettingsPatch(patch);
+    if (!validation.ok) return badRequest(validation.error);
+    const update: Record<string, unknown> = { ...validation.value };
 
     if (!Object.keys(update).length) return badRequest('Nothing to update');
 
@@ -135,7 +72,7 @@ Deno.serve(async req => {
     if (error) throw new Error(error.message);
 
     console.log(`[admin-discord-settings] updated by ${senderName || senderId}:`, Object.keys(patch).join(', '));
-    return json(200, { ok: true, settings: settingsForClient(data) });
+    return json(200, { ok: true, settings: maskDiscordSettings(data) });
   } catch (error) {
     console.error('[admin-discord-settings] failed', error);
     return json(500, { error: (error as Error).message || 'Discord settings update failed' });

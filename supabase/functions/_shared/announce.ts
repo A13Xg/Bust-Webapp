@@ -122,7 +122,12 @@ async function announce(
       return { status: 'no-recipients', kind, sourceId };
     }
 
-    const result = await sendToSubscriptions(admin, subscriptions, { ...payload, data: { kind, sourceId } }, { actorId });
+    const result = await sendToSubscriptions(
+      admin,
+      subscriptions,
+      { ...payload, data: { kind, sourceId } },
+      { actorId }
+    );
     await finishPushEvent(admin, eventId, result);
     return { status: 'sent', kind, sourceId, result };
   } catch (error) {
@@ -149,19 +154,24 @@ export async function announceBust(
     bustId: bust.id,
     city: bust.city,
   });
-  const outcome = await announce(admin, 'bust', bust.id, bust.user_id, payload);
   // Independent of the push outcome above (sent, no-recipients, duplicate —
   // all mean "this bust happened"): Discord gets its own exactly-once ledger,
-  // see _shared/discord.ts.
-  await sendDiscordNotification(admin, 'bust', {
-    sourceId: bust.id,
-    actorId: bust.user_id,
-    username: name,
-    note: bust.note,
-    city: bust.city,
-    pushTitle: payload.title,
-    pushBody: payload.body,
-  });
+  // see _shared/discord.ts. Run alongside the push send rather than after it —
+  // sendDiscordNotification never throws, so there's no error-handling reason
+  // to serialize them, and doing so would add the full webhook round trip to
+  // every bust's latency for no benefit.
+  const [outcome] = await Promise.all([
+    announce(admin, 'bust', bust.id, bust.user_id, payload),
+    sendDiscordNotification(admin, 'bust', {
+      sourceId: bust.id,
+      actorId: bust.user_id,
+      username: name,
+      note: bust.note,
+      city: bust.city,
+      pushTitle: payload.title,
+      pushBody: payload.body,
+    }),
+  ]);
   return outcome;
 }
 
@@ -171,8 +181,7 @@ export async function announceAchievement(
   username?: string
 ) {
   const meta = achievementById.get(achievement.achievement_type) as
-    | { name?: string; tier?: string; points?: number; accent?: string }
-    | undefined;
+    { name?: string; tier?: string; points?: number; accent?: string } | undefined;
   // An id outside the catalog means stale or hand-written data. Claim it anyway
   // so the scheduled sweep evaluates it once rather than on every run for the
   // whole lookback window, then decline to announce it (nothing meaningful to
@@ -214,14 +223,21 @@ export async function announceAchievement(
     achievement.user_id
   );
   if (slotEventId == null) {
-    await claimWithoutSending(admin, 'achievement', achievement.id, achievement.user_id);
-    await sendDiscordNotification(admin, 'achievement', discordContext);
+    await Promise.all([
+      claimWithoutSending(admin, 'achievement', achievement.id, achievement.user_id),
+      sendDiscordNotification(admin, 'achievement', discordContext),
+    ]);
     return { status: 'suppressed' as const, kind: 'achievement', sourceId: achievement.id };
   }
   await finishPushEvent(admin, slotEventId, { attempted: 0, delivered: 0, pruned: 0, failures: [] });
 
-  const outcome = await announce(admin, 'achievement', achievement.id, achievement.user_id, payload, slotEventId);
-  await sendDiscordNotification(admin, 'achievement', discordContext);
+  // Same reasoning as announceBust: these two are independent and
+  // sendDiscordNotification never throws, so run them concurrently instead of
+  // adding the Discord round trip to every achievement's latency.
+  const [outcome] = await Promise.all([
+    announce(admin, 'achievement', achievement.id, achievement.user_id, payload, slotEventId),
+    sendDiscordNotification(admin, 'achievement', discordContext),
+  ]);
 
   // Only after a send actually went out. On 'failed' the claim was released so
   // the sweep can retry this row, and retiring its siblings then would throw

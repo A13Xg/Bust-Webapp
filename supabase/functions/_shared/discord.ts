@@ -19,7 +19,11 @@
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { claimEvent, releaseEvent } from './eventLedger.ts';
 import type { EventKind } from './eventLedger.ts';
-import { buildAchievementDiscordPayload, buildBustDiscordPayload } from '../../../src/discordTemplate.js';
+import {
+  buildAchievementDiscordPayload,
+  buildBustDiscordPayload,
+  hexToDiscordColor,
+} from '../../../src/discordTemplate.js';
 
 export type DiscordSettings = {
   enabled: boolean;
@@ -57,7 +61,109 @@ export const DEFAULT_DISCORD_SETTINGS: DiscordSettings = {
   include_thumbnail: true,
 };
 
-/** The one settings row (id = true). Missing row means "never configured". */
+export const DISCORD_SETTINGS_TEXT_FIELDS = [
+  'webhook_url',
+  'bot_username',
+  'bot_avatar_url',
+  'footer_text',
+  'bust_color',
+  'achievement_color',
+  'bust_title_template',
+  'bust_description_template',
+  'achievement_title_template',
+  'achievement_description_template',
+  'mention_content',
+] as const;
+
+export const DISCORD_SETTINGS_BOOLEAN_FIELDS = [
+  'enabled',
+  'bust_enabled',
+  'achievement_enabled',
+  'include_thumbnail',
+] as const;
+
+const MAX_TEXT_LENGTH: Partial<Record<(typeof DISCORD_SETTINGS_TEXT_FIELDS)[number], number>> = {
+  webhook_url: 2000,
+  bot_username: 80,
+  bot_avatar_url: 2000,
+  footer_text: 2048,
+  bust_color: 7,
+  achievement_color: 7,
+  bust_title_template: 256,
+  bust_description_template: 4096,
+  achievement_title_template: 256,
+  achievement_description_template: 4096,
+  mention_content: 200,
+};
+
+export const DISCORD_WEBHOOK_URL_RE = /^https:\/\/(discord\.com|discordapp\.com)\/api\/webhooks\/(\d+)\/([\w-]+)\/?$/;
+const WEBHOOK_TOKEN_MASK = '••••••••••••••••';
+
+/**
+ * The webhook URL embeds a bearer-equivalent token: anyone who has it can post
+ * to the channel. Never send the real token back to the browser — only the
+ * (non-secret) numeric webhook id, with the token replaced by a fixed
+ * placeholder. Used by both `admin-discord-settings` (so GET/UPDATE responses
+ * never leak it) and `discord-test-notification` (so the preview form's
+ * untouched masked field doesn't get sent back as a literal webhook URL).
+ *
+ * Falls back to a generic placeholder for a non-empty URL that doesn't match
+ * the expected shape (a legacy host, a trailing query string, etc.) so a
+ * webhook that's merely unusual still reads as "configured" instead of
+ * silently vanishing from the admin UI.
+ */
+export function maskWebhookUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  const match = DISCORD_WEBHOOK_URL_RE.exec(url);
+  if (match) return `https://discord.com/api/webhooks/${match[2]}/${WEBHOOK_TOKEN_MASK}`;
+  return `(configured) ${WEBHOOK_TOKEN_MASK}`;
+}
+
+/** `settings` with the webhook token masked — what every client-facing response sends. */
+export function maskDiscordSettings<T extends { webhook_url: string | null }>(settings: T): T {
+  return { ...settings, webhook_url: maskWebhookUrl(settings.webhook_url) };
+}
+
+export type DiscordSettingsValidation = { ok: true; value: Partial<DiscordSettings> } | { ok: false; error: string };
+
+/**
+ * Whitelist, type-check, length-check, and format-check a raw patch object
+ * against `discord_settings`'s columns. Shared by `admin-discord-settings`
+ * (persists the result) and `discord-test-notification` (merges it into a
+ * preview without persisting) so arbitrary client input can never reach
+ * either the database or a live webhook call unvalidated.
+ */
+export function validateDiscordSettingsPatch(patch: Record<string, unknown>): DiscordSettingsValidation {
+  const value: Record<string, unknown> = {};
+
+  for (const field of DISCORD_SETTINGS_BOOLEAN_FIELDS) {
+    if (!(field in patch)) continue;
+    if (typeof patch[field] !== 'boolean') return { ok: false, error: `${field} must be a boolean` };
+    value[field] = patch[field];
+  }
+
+  for (const field of DISCORD_SETTINGS_TEXT_FIELDS) {
+    if (!(field in patch)) continue;
+    const raw = patch[field];
+    if (raw !== null && typeof raw !== 'string') return { ok: false, error: `${field} must be a string or null` };
+    const text = raw == null ? null : (raw as string).trim() || null;
+    const limit = MAX_TEXT_LENGTH[field];
+    if (text && limit && text.length > limit) {
+      return { ok: false, error: `${field} is too long (max ${limit} characters)` };
+    }
+    if (text && (field === 'bust_color' || field === 'achievement_color') && hexToDiscordColor(text) == null) {
+      return { ok: false, error: `${field} must be a hex color like #5865F2` };
+    }
+    if (text && field === 'webhook_url' && !DISCORD_WEBHOOK_URL_RE.test(text)) {
+      return { ok: false, error: 'webhook_url must be a discord.com/api/webhooks/... URL' };
+    }
+    value[field] = text;
+  }
+
+  return { ok: true, value };
+}
+
+/** The one settings row (id = 1). Missing row means "never configured". */
 export async function getDiscordSettings(admin: SupabaseClient): Promise<DiscordSettings> {
   const { data, error } = await admin.from('discord_settings').select('*').eq('id', 1).maybeSingle();
   if (error) {
