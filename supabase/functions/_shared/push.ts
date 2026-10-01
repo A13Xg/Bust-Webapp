@@ -231,11 +231,7 @@ export async function releasePushEvent(admin: SupabaseClient, eventId: number) {
   await releaseEvent(admin, 'push_events', eventId);
 }
 
-export async function finishPushEvent(
-  admin: SupabaseClient,
-  eventId: number,
-  result: DeliveryResult
-) {
+export async function finishPushEvent(admin: SupabaseClient, eventId: number, result: DeliveryResult) {
   await admin
     .from('push_events')
     .update({ dispatched_at: new Date().toISOString(), recipients: result.attempted, delivered: result.delivered })

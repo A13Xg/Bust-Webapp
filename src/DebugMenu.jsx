@@ -777,6 +777,10 @@ function DiscordTab() {
           placeholder="https://discord.com/api/webhooks/…"
           onChange={e => patchField('webhook_url', e.target.value)}
         />
+        <small>
+          Shown masked after saving — the token never round-trips to this screen. Leave the masked value untouched to
+          keep it, or paste a full new URL to replace it.
+        </small>
       </label>
 
       <div className="debug-grid">

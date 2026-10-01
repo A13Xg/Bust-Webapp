@@ -48,10 +48,28 @@ const MAX_TEXT_LENGTH: Partial<Record<(typeof TEXT_FIELDS)[number], number>> = {
   mention_content: 200,
 };
 
-const DISCORD_WEBHOOK_RE = /^https:\/\/(discord\.com|discordapp\.com)\/api\/webhooks\/\d+\/[\w-]+\/?$/;
+const DISCORD_WEBHOOK_RE = /^https:\/\/(discord\.com|discordapp\.com)\/api\/webhooks\/(\d+)\/([\w-]+)\/?$/;
+const WEBHOOK_TOKEN_MASK = '••••••••••••••••';
 
 function badRequest(message: string) {
   return json(400, { error: message });
+}
+
+/**
+ * The webhook URL embeds a bearer-equivalent token: anyone who has it can
+ * post to the channel. Never send the real token back to the browser — only
+ * the (non-secret) numeric webhook id, with the token replaced by a fixed
+ * placeholder. `settingsForClient` is what every response sends out.
+ */
+function maskWebhookUrl(url: string | null): string | null {
+  if (!url) return null;
+  const match = DISCORD_WEBHOOK_RE.exec(url);
+  if (!match) return null;
+  return `https://discord.com/api/webhooks/${match[2]}/${WEBHOOK_TOKEN_MASK}`;
+}
+
+function settingsForClient(settings: Record<string, unknown>) {
+  return { ...settings, webhook_url: maskWebhookUrl((settings.webhook_url as string | null) ?? null) };
 }
 
 Deno.serve(async req => {
@@ -68,9 +86,10 @@ Deno.serve(async req => {
 
     if (action === 'get') {
       const settings = await getDiscordSettings(admin);
-      return json(200, { ok: true, settings, defaults: DEFAULT_DISCORD_SETTINGS });
+      return json(200, { ok: true, settings: settingsForClient(settings), defaults: DEFAULT_DISCORD_SETTINGS });
     }
 
+    const current = await getDiscordSettings(admin);
     const patch = body?.patch && typeof body.patch === 'object' ? body.patch : {};
     const update: Record<string, unknown> = {};
 
@@ -86,6 +105,12 @@ Deno.serve(async req => {
       const raw = patch[field];
       if (raw !== null && typeof raw !== 'string') return badRequest(`${field} must be a string or null`);
       const value = raw == null ? null : raw.trim() || null;
+
+      // The client only ever sees the masked form of an existing webhook_url
+      // (see `settingsForClient`). Submitting that unedited placeholder back
+      // means "leave it alone" — not "set my secret to a string of bullets".
+      if (field === 'webhook_url' && value && value === maskWebhookUrl(current.webhook_url)) continue;
+
       const limit = MAX_TEXT_LENGTH[field];
       if (value && limit && value.length > limit) return badRequest(`${field} is too long (max ${limit} characters)`);
       if (value && (field === 'bust_color' || field === 'achievement_color') && hexToDiscordColor(value) == null) {
@@ -110,7 +135,7 @@ Deno.serve(async req => {
     if (error) throw new Error(error.message);
 
     console.log(`[admin-discord-settings] updated by ${senderName || senderId}:`, Object.keys(patch).join(', '));
-    return json(200, { ok: true, settings: data });
+    return json(200, { ok: true, settings: settingsForClient(data) });
   } catch (error) {
     console.error('[admin-discord-settings] failed', error);
     return json(500, { error: (error as Error).message || 'Discord settings update failed' });

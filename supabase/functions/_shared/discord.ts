@@ -18,10 +18,8 @@
  */
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { claimEvent, releaseEvent } from './eventLedger.ts';
-import {
-  buildAchievementDiscordPayload,
-  buildBustDiscordPayload,
-} from '../../../src/discordTemplate.js';
+import type { EventKind } from './eventLedger.ts';
+import { buildAchievementDiscordPayload, buildBustDiscordPayload } from '../../../src/discordTemplate.js';
 
 export type DiscordSettings = {
   enabled: boolean;
@@ -98,7 +96,7 @@ async function postToDiscordWebhook(webhookUrl: string, payload: unknown) {
   return response;
 }
 
-function claimDiscordEvent(admin: SupabaseClient, kind: 'bust' | 'achievement', sourceId: string, actorId: string | null) {
+function claimDiscordEvent(admin: SupabaseClient, kind: EventKind, sourceId: string, actorId: string | null) {
   return claimEvent(admin, 'discord_events', kind, sourceId, actorId);
 }
 
@@ -145,9 +143,7 @@ export type DiscordAchievementContext = {
 };
 
 export type DiscordOutcome =
-  | { status: 'disabled' | 'unconfigured' | 'duplicate' }
-  | { status: 'sent' }
-  | { status: 'failed'; error: string };
+  { status: 'disabled' | 'unconfigured' | 'duplicate' } | { status: 'sent' } | { status: 'failed'; error: string };
 
 /**
  * Post a webhook message for one bust or achievement, exactly once. Always
@@ -156,7 +152,7 @@ export type DiscordOutcome =
  */
 export async function sendDiscordNotification(
   admin: SupabaseClient,
-  kind: 'bust' | 'achievement',
+  kind: EventKind,
   context: DiscordBustContext | DiscordAchievementContext
 ): Promise<DiscordOutcome> {
   try {
@@ -205,7 +201,7 @@ export async function sendDiscordNotification(
  * resend freely.
  */
 export async function sendDiscordTestMessage(
-  kind: 'bust' | 'achievement',
+  kind: EventKind,
   settings: DiscordSettings,
   sample: Record<string, unknown> = {}
 ) {
@@ -223,7 +219,10 @@ export async function sendDiscordTestMessage(
     points: 50,
     accent: '#ffd166',
     pushTitle: kind === 'bust' ? 'TestCrewMember just busted' : 'TestCrewMember unlocked Sample Achievement',
-    pushBody: kind === 'bust' ? 'Cooldown started. The rest of you are just standing there.' : 'Awarded for behavior nobody asked to be tracked.',
+    pushBody:
+      kind === 'bust'
+        ? 'Cooldown started. The rest of you are just standing there.'
+        : 'Awarded for behavior nobody asked to be tracked.',
     sentAt: new Date(),
     siteUrl: siteUrl(),
     ...sample,
