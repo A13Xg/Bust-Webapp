@@ -17,6 +17,7 @@
  * through `announceBust` / `announceAchievement` in `_shared/announce.ts`.
  */
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { claimEvent, releaseEvent } from './eventLedger.ts';
 import {
   buildAchievementDiscordPayload,
   buildBustDiscordPayload,
@@ -60,7 +61,7 @@ export const DEFAULT_DISCORD_SETTINGS: DiscordSettings = {
 
 /** The one settings row (id = true). Missing row means "never configured". */
 export async function getDiscordSettings(admin: SupabaseClient): Promise<DiscordSettings> {
-  const { data, error } = await admin.from('discord_settings').select('*').eq('id', true).maybeSingle();
+  const { data, error } = await admin.from('discord_settings').select('*').eq('id', 1).maybeSingle();
   if (error) {
     console.error('[discord] could not load settings, treating as disabled', error.message);
     return DEFAULT_DISCORD_SETTINGS;
@@ -97,22 +98,12 @@ async function postToDiscordWebhook(webhookUrl: string, payload: unknown) {
   return response;
 }
 
-async function claimDiscordEvent(admin: SupabaseClient, kind: 'bust' | 'achievement', sourceId: string, actorId: string | null) {
-  const { data, error } = await admin
-    .from('discord_events')
-    .insert({ kind, source_id: sourceId, actor_id: actorId })
-    .select('id')
-    .maybeSingle();
-  if (error) {
-    if (error.code === '23505') return null; // already claimed — not an error
-    throw new Error(error.message);
-  }
-  return data?.id ?? null;
+function claimDiscordEvent(admin: SupabaseClient, kind: 'bust' | 'achievement', sourceId: string, actorId: string | null) {
+  return claimEvent(admin, 'discord_events', kind, sourceId, actorId);
 }
 
 async function releaseDiscordEvent(admin: SupabaseClient, eventId: number) {
-  const { error } = await admin.from('discord_events').delete().eq('id', eventId);
-  if (error) console.error('[discord] could not release claim', eventId, error.message);
+  await releaseEvent(admin, 'discord_events', eventId);
 }
 
 async function finishDiscordEvent(

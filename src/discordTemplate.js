@@ -114,6 +114,7 @@ export function buildBustDiscordPayload(ctx, settings = {}) {
     color: hexToDiscordColor(settings.bust_color) ?? hexToDiscordColor(DEFAULT_BUST_COLOR),
     fields,
     thumbnailUrl: null,
+    sentAt: ctx.sentAt,
   });
 }
 
@@ -132,17 +133,17 @@ export function buildAchievementDiscordPayload(ctx, settings = {}) {
     hexToDiscordColor(ctx.accent) ??
     hexToDiscordColor(DEFAULT_ACHIEVEMENT_COLOR);
   const thumbnailUrl = settings.include_thumbnail === false ? null : badgeImageUrl(ctx.tier, ctx.siteUrl);
-  return assemblePayload(settings, { title, description, color, fields, thumbnailUrl });
+  return assemblePayload(settings, { title, description, color, fields, thumbnailUrl, sentAt: ctx.sentAt });
 }
 
-function assemblePayload(settings, { title, description, color, fields, thumbnailUrl }) {
+function assemblePayload(settings, { title, description, color, fields, thumbnailUrl, sentAt }) {
   const embed = {
     title: title || undefined,
     description: description || undefined,
     color: color ?? undefined,
     fields: fields.length ? fields : undefined,
     footer: { text: String(settings.footer_text || DEFAULT_FOOTER_TEXT) },
-    timestamp: new Date().toISOString(),
+    timestamp: (sentAt instanceof Date && !Number.isNaN(sentAt.getTime()) ? sentAt : new Date()).toISOString(),
   };
   if (thumbnailUrl) embed.thumbnail = { url: thumbnailUrl };
   const payload = {

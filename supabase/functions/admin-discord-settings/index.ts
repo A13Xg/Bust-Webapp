@@ -104,7 +104,7 @@ Deno.serve(async req => {
 
     const { data, error } = await admin
       .from('discord_settings')
-      .upsert({ id: true, ...update }, { onConflict: 'id' })
+      .upsert({ id: 1, ...update }, { onConflict: 'id' })
       .select('*')
       .single();
     if (error) throw new Error(error.message);

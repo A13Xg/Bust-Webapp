@@ -30,7 +30,7 @@
 
 create table if not exists public.discord_settings (
   -- Singleton row. The check pins it to id = 1 so there can only ever be one.
-  id boolean primary key default true,
+  id integer primary key default 1,
   enabled boolean not null default false,
   bust_enabled boolean not null default true,
   achievement_enabled boolean not null default true,
@@ -57,7 +57,7 @@ create table if not exists public.discord_settings (
   include_thumbnail boolean not null default true,
   updated_at timestamptz not null default now(),
   updated_by uuid references public.profiles(id) on delete set null,
-  constraint discord_settings_singleton check (id = true)
+  constraint discord_settings_singleton check (id = 1)
 );
 
 alter table public.discord_settings enable row level security;

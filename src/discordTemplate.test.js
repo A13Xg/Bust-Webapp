@@ -83,6 +83,9 @@ describe('discord templates', () => {
     expect(payload.embeds[0].fields).toEqual([{ name: 'City', value: 'Austin', inline: true }]);
     expect(payload.embeds[0].thumbnail).toBeUndefined();
     expect(payload.username).toBe('BUST Control');
+    // The embed timestamp must reflect when the event actually happened, not
+    // when it happens to be posted — matters for delayed backstop sweeps.
+    expect(payload.embeds[0].timestamp).toBe(ctx.sentAt.toISOString());
   });
 
   it('builds an achievement payload with tier/points fields and a badge thumbnail', () => {

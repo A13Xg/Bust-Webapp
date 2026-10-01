@@ -8,6 +8,7 @@
 import { fetchAllPages } from '../../../src/fetchAllPages.js';
 import webpush from 'npm:web-push@3.6.7';
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { claimEvent, releaseEvent } from './eventLedger.ts';
 
 export const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -212,23 +213,13 @@ export async function subscriptionsForCrew(
  * claimed it, which is what makes the client fan-out and the cron backstop
  * safe to run concurrently.
  */
-export async function claimPushEvent(
+export function claimPushEvent(
   admin: SupabaseClient,
   kind: 'bust' | 'achievement',
   sourceId: string,
   actorId: string | null
 ) {
-  const { data, error } = await admin
-    .from('push_events')
-    .insert({ kind, source_id: sourceId, actor_id: actorId })
-    .select('id')
-    .maybeSingle();
-  if (error) {
-    // 23505 = someone else claimed it first. Any other error is real.
-    if (error.code === '23505') return null;
-    throw new Error(error.message);
-  }
-  return data?.id ?? null;
+  return claimEvent(admin, 'push_events', kind, sourceId, actorId);
 }
 
 /**
@@ -237,8 +228,7 @@ export async function claimPushEvent(
  * suppresses that notification.
  */
 export async function releasePushEvent(admin: SupabaseClient, eventId: number) {
-  const { error } = await admin.from('push_events').delete().eq('id', eventId);
-  if (error) console.error('[push] could not release claim', eventId, error.message);
+  await releaseEvent(admin, 'push_events', eventId);
 }
 
 export async function finishPushEvent(
