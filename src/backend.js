@@ -4,6 +4,7 @@
  * what makes a GitHub Pages deployment work.
  */
 import { timeBucket } from './rules.js';
+import { fetchAllPages } from './fetchAllPages.js';
 
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -39,8 +40,7 @@ const synthEmail = u => `${String(u).trim().toLowerCase().replace(/[^a-z0-9]+/g,
 function toUser(p) { return p ? { id: p.id, username: p.username, avatar_seed: p.avatar_seed, created_at: p.created_at, last_bust_timestamp: p.last_bust_timestamp, tagline: p.tagline || null, showcase: p.showcase || null } : null; }
 function joinBust(b) { const p = profileCache.get(b.user_id) || {}; return { ...b, username: p.username || 'Unknown', avatar_seed: p.avatar_seed || 'bust' }; }
 async function refreshProfiles(sb) {
-  const { data, error } = await sb.from('profiles').select('*').order('created_at', { ascending: true });
-  if (error) throw new Error(error.message);
+  const data = await fetchAllPages((from, to) => sb.from('profiles').select('*').order('created_at', { ascending: true }).order('id', { ascending: true }).range(from, to));
   profileCache = new Map(data.map(p => [p.id, p]));
   return data;
 }
@@ -102,12 +102,10 @@ const staticBackend = {
     const sb = await getSupa();
     const [profiles, busts, achievements] = await Promise.all([
       refreshProfiles(sb),
-      sb.from('busts').select('*').order('timestamp', { ascending: false }).limit(300),
-      sb.from('achievements').select('*').order('unlocked_at', { ascending: false })
+      fetchAllPages((from, to) => sb.from('busts').select('*').order('timestamp', { ascending: false }).order('id', { ascending: false }).range(from, to)),
+      fetchAllPages((from, to) => sb.from('achievements').select('*').order('unlocked_at', { ascending: false }).order('id', { ascending: false }).range(from, to))
     ]);
-    if (busts.error) throw new Error(busts.error.message);
-    if (achievements.error) throw new Error(achievements.error.message);
-    return { users: profiles.map(toUser), busts: busts.data.map(joinBust), achievements: achievements.data };
+    return { users: profiles.map(toUser), busts: busts.map(joinBust), achievements };
   },
   async recentBusts(limit = 60) {
     const sb = await getSupa();
@@ -121,10 +119,25 @@ const staticBackend = {
     const { data: { user } } = await sb.auth.getUser();
     if (!user) throw new Error('Not signed in');
     const now = new Date();
-    const row = { user_id: user.id, timestamp: now.toISOString(), note: String(payload.note || '').slice(0, 240), temp_f: payload.temp_f, pressure: payload.pressure, lat: payload.lat, long: payload.long, city: payload.city, elevation_ft: payload.elevation_ft, tide_ft: payload.tide_ft, btc_usd: payload.btc_usd, time_bucket: timeBucket(now) };
+    if (payload.actorId && payload.actorId !== user.id) throw new Error('Signed-in account changed before submission');
+    const row = { id: payload.id || crypto.randomUUID(), user_id: user.id, timestamp: now.toISOString(), note: String(payload.note || '').slice(0, 240), temp_f: payload.temp_f, pressure: payload.pressure, lat: payload.lat, long: payload.long, city: payload.city, elevation_ft: payload.elevation_ft, tide_ft: payload.tide_ft, btc_usd: payload.btc_usd, time_bucket: timeBucket(now) };
     const { data, error } = await sb.from('busts').insert(row).select().single();
     if (error) throw new Error(/policy|row-level|cooldown/i.test(error.message) ? 'Cooldown is still active' : error.message);
     return joinBust(data);
+  },
+  async bustById(id, actorId) {
+    const sb = await getSupa();
+    const { data, error } = await sb.from('busts').select('*').eq('id', id).eq('user_id', actorId).maybeSingle();
+    if (error) throw new Error(error.message);
+    return data ? joinBust(data) : null;
+  },
+  async latestOwnLocation(actorId, signal) {
+    const sb = await getSupa();
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user || user.id !== actorId) return null;
+    const { data, error } = await sb.from('busts').select('lat,long,timestamp').eq('user_id', actorId).not('lat', 'is', null).not('long', 'is', null).order('timestamp', { ascending: false }).limit(50).abortSignal(signal);
+    if (error) throw new Error(error.message);
+    return data.find(row => typeof row.lat === 'number' && typeof row.long === 'number' && Math.abs(row.lat) <= 90 && Math.abs(row.long) <= 180) || null;
   },
   async patchBustNote(id, note) {
     const sb = await getSupa();
@@ -268,7 +281,7 @@ const staticBackend = {
     profileCache.set(data.id, data);
     return toUser(data);
   },
-  subscribe({ onBust, onProfile, onStatus }) {
+  subscribe({ onBust, onProfile, onAchievement, onStatus }) {
     let channel;
     let unsubscribed = false;
     getSupa().then(sb => {
@@ -282,9 +295,21 @@ const staticBackend = {
           if (!profileCache.has(payload.new.user_id)) { try { await refreshProfiles(sb); } catch {} }
           onBust?.(joinBust(payload.new), 'updated');
         })
+        .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'busts' }, payload => onBust?.(payload.old, 'deleted'))
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'profiles' }, payload => {
+          profileCache.set(payload.new.id, payload.new);
+          onProfile?.(toUser(payload.new), 'created');
+        })
         .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, payload => {
           profileCache.set(payload.new.id, payload.new);
-          onProfile?.(toUser(payload.new));
+          onProfile?.(toUser(payload.new), 'updated');
+        })
+        .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'profiles' }, payload => {
+          profileCache.delete(payload.old.id);
+          onProfile?.(payload.old, 'deleted');
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'achievements' }, payload => {
+          onAchievement?.(payload.eventType === 'DELETE' ? payload.old : payload.new, payload.eventType.toLowerCase());
         })
         .subscribe(status => {
           if (unsubscribed) return;

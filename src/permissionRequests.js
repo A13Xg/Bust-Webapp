@@ -25,7 +25,9 @@
  * See PROJECT.md §12 for the scope and source link.
  */
 
-export const GEO_TIMEOUT_MS = 15000;
+import { acquireLocation } from './location.js';
+
+export const GEO_TIMEOUT_MS = 10000;
 
 /** Outcomes, roughly worst-to-best for display ordering. */
 export const OUTCOME = {
@@ -90,37 +92,7 @@ export function outcomeHint(outcome) {
  * outcome rather than handle an exception.
  */
 export function requestLocation({ geolocation = globalThis.navigator?.geolocation, timeoutMs = GEO_TIMEOUT_MS } = {}) {
-  if (!geolocation?.getCurrentPosition) return Promise.resolve({ outcome: OUTCOME.unsupported, coords: null });
-  return new Promise(resolve => {
-    let settled = false;
-    const finish = value => {
-      if (settled) return;
-      settled = true;
-      resolve(value);
-    };
-    /* Belt and braces: some browsers have historically ignored the `timeout`
-     * option, which would leave the dialog stuck on ASKING… forever. */
-    const timer = setTimeout(() => finish({ outcome: OUTCOME.timeout, coords: null }), timeoutMs + 500);
-    geolocation.getCurrentPosition(
-      position => {
-        clearTimeout(timer);
-        finish({
-          outcome: OUTCOME.granted,
-          coords: {
-            lat: position.coords.latitude,
-            long: position.coords.longitude,
-            altitude: position.coords.altitude,
-            at: Date.now(),
-          },
-        });
-      },
-      error => {
-        clearTimeout(timer);
-        finish({ outcome: classifyGeolocationError(error), coords: null });
-      },
-      { timeout: timeoutMs }
-    );
-  });
+  return acquireLocation({ geolocation, timeoutMs });
 }
 
 export const GEO_STORAGE_KEY = 'bust_geo';

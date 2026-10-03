@@ -397,6 +397,21 @@ Sign-ups require the invite code `bust4me` (compared case-insensitively).
 
 ## 12. Known gaps
 
+The original Copilot-request completion work is under development on a feature
+branch. Current implementation loads full bust and award histories, exposes a
+crew roster/read-only profiles and recorded trophy history, and shares a bounded
+geolocation probe between startup and bust. Location acquired during the page
+session is reused for five minutes; otherwise a bust waits up to five seconds,
+then tries its actor's prior recorded coordinates and refreshes available region
+metrics. A geolocation permission prompt can outlive the application's timeout;
+the app cannot dismiss it. Push permission remains an explicit profile action.
+
+Before release, finish keyboard focus/history ownership for nested dialogs,
+verify the flow on installed iOS and Android devices, and test the realtime
+publication migration against an existing Supabase database. The deployment
+workflow applies `supabase/migrations/` before shipping the frontend; no manual
+database command is intended for this additive publication change.
+
 - Edge Functions are typed and unit-tested (see §8), but nothing runs them
   end-to-end in CI against real RLS/triggers/auth. A `supabase start`
   (Docker) integration job is the remaining follow-up.

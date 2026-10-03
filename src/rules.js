@@ -261,16 +261,17 @@ export function levelForXp(points = 0) {
 export function deriveStreaks(bustList = []) {
   const days = [...new Set(bustList.map(b => todayKey(b.timestamp)))];
   if (!days.length) return { current: 0, longest: 0 };
-  const stamps = days.map(k => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d).getTime(); }).sort((a, b) => a - b);
-  const DAY = 24 * 60 * 60 * 1000;
+  // UTC calendar ordinals retain the viewer's local date without assuming a
+  // local midnight is exactly 24 hours from the next one across DST.
+  const stamps = days.map(k => { const [y, m, d] = k.split('-').map(Number); return Date.UTC(y, m - 1, d) / 86400000; }).sort((a, b) => a - b);
   let longest = 1, run = 1;
-  for (let i = 1; i < stamps.length; i++) { run = stamps[i] - stamps[i - 1] === DAY ? run + 1 : 1; longest = Math.max(longest, run); }
+  for (let i = 1; i < stamps.length; i++) { run = stamps[i] - stamps[i - 1] === 1 ? run + 1 : 1; longest = Math.max(longest, run); }
   const last = stamps[stamps.length - 1];
-  const todayStamp = (() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime(); })();
+  const todayStamp = (() => { const n = new Date(); return Date.UTC(n.getFullYear(), n.getMonth(), n.getDate()) / 86400000; })();
   let current = 0;
-  if (last === todayStamp || last === todayStamp - DAY) {
+  if (last === todayStamp || last === todayStamp - 1) {
     current = 1;
-    for (let i = stamps.length - 1; i > 0; i--) { if (stamps[i] - stamps[i - 1] === DAY) current++; else break; }
+    for (let i = stamps.length - 1; i > 0; i--) { if (stamps[i] - stamps[i - 1] === 1) current++; else break; }
   }
   return { current, longest };
 }
@@ -298,6 +299,7 @@ export function derivePersonalStats(userId, busts = [], unlocks = []) {
   const weeks = first ? Math.max(1, (Date.now() - new Date(first).getTime()) / (7 * 24 * 60 * 60 * 1000)) : 1;
   const points = unlocks
     .filter(a => a.user_id === userId)
+    .filter((a, index, rows) => rows.findIndex(other => other.achievement_type === a.achievement_type) === index)
     .map(a => achievements.find(x => x.id === a.achievement_type)?.points || 0)
     .reduce((s, p) => s + p, 0);
   return {
