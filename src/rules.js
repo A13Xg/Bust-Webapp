@@ -278,10 +278,15 @@ export function deriveStreaks(bustList = []) {
 
 // ---------- Trend series ----------
 export function buildTrend(busts = [], days = 30, now = new Date()) {
+  const counts = new Map();
+  for (const bust of busts) {
+    const day = new Date(bust.timestamp).toDateString();
+    counts.set(day, (counts.get(day) || 0) + 1);
+  }
   return Array.from({ length: days }).map((_, i) => {
     const d = new Date(now); d.setDate(d.getDate() - (days - 1 - i));
     const key = d.toDateString();
-    return { label: d.toLocaleDateString([], { month: 'numeric', day: 'numeric' }), count: busts.filter(b => new Date(b.timestamp).toDateString() === key).length };
+    return { label: d.toLocaleDateString([], { month: 'numeric', day: 'numeric' }), count: counts.get(key) || 0 };
   });
 }
 

@@ -87,18 +87,12 @@ export function clearLocation() {
 }
 
 export function newestOwnLocation(busts, userId) {
-  for (const row of [...busts]
-    .filter(b => b.user_id === userId)
-    .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp))) {
-    if (
-      typeof row.lat === 'number' &&
-      typeof row.long === 'number' &&
-      Number.isFinite(row.lat) &&
-      Number.isFinite(row.long) &&
-      Math.abs(row.lat) <= 90 &&
-      Math.abs(row.long) <= 180
-    )
-      return { lat: row.lat, long: row.long, altitude: null, at: null };
+  let latest = null;
+  for (const row of busts) {
+    if (row.user_id !== userId || typeof row.lat !== 'number' || typeof row.long !== 'number') continue;
+    if (!Number.isFinite(row.lat) || !Number.isFinite(row.long) || Math.abs(row.lat) > 90 || Math.abs(row.long) > 180)
+      continue;
+    if (!latest || Date.parse(row.timestamp) > Date.parse(latest.timestamp)) latest = row;
   }
-  return null;
+  return latest ? { lat: latest.lat, long: latest.long, altitude: null, at: null } : null;
 }

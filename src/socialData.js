@@ -63,8 +63,8 @@ export function userMetrics(userId, busts, unlocks) {
           unit,
           count: values.length,
           average: values.length ? values.reduce((a, b) => a + b, 0) / values.length : null,
-          min: values.length ? Math.min(...values) : null,
-          max: values.length ? Math.max(...values) : null,
+          min: values.length ? values.reduce((minimum, value) => Math.min(minimum, value), Infinity) : null,
+          max: values.length ? values.reduce((maximum, value) => Math.max(maximum, value), -Infinity) : null,
         },
       ];
     })

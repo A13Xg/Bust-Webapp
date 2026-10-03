@@ -218,6 +218,11 @@ already records the event.
 The DISCORD debug-menu tab reads and updates settings through the admin-
 allowlisted Edge Functions. The webhook token is masked in responses and is
 stored in the service-role-only `discord_settings` table if entered in the UI.
+The admin must press **SAVE DISCORD SETTINGS**; **SEND TEST** previews unsaved
+form values but does not persist them. The enable switch must also be on for
+normal events to be sent. A masked webhook on reopening the tab means a saved
+override exists; a blank field with no `DISCORD_WEBHOOK_URL` Function secret
+means there is no delivery destination.
 Alternatively set the `DISCORD_WEBHOOK_URL` Supabase Function secret as a
 fallback; `SITE_URL` optionally sets the public badge image host. GitHub
 repository secrets are not copied into Supabase by Actions. Configure them

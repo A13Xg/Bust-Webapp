@@ -135,7 +135,7 @@ const staticBackend = {
     const sb = await getSupa();
     const { data: { user } } = await sb.auth.getUser();
     if (!user || user.id !== actorId) return null;
-    const { data, error } = await sb.from('busts').select('lat,long,timestamp').eq('user_id', actorId).not('lat', 'is', null).not('long', 'is', null).order('timestamp', { ascending: false }).limit(50).abortSignal(signal);
+    const { data, error } = await sb.from('busts').select('lat,long,timestamp').eq('user_id', actorId).gte('lat', -90).lte('lat', 90).gte('long', -180).lte('long', 180).order('timestamp', { ascending: false }).order('id', { ascending: false }).limit(1).abortSignal(signal);
     if (error) throw new Error(error.message);
     return data.find(row => typeof row.lat === 'number' && typeof row.long === 'number' && Math.abs(row.lat) <= 90 && Math.abs(row.long) <= 180) || null;
   },
@@ -289,26 +289,32 @@ const staticBackend = {
       channel = sb.channel('bust-feed')
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'busts' }, async payload => {
           if (!profileCache.has(payload.new.user_id)) { try { await refreshProfiles(sb); } catch {} }
+          if (unsubscribed) return;
           onBust?.(joinBust(payload.new), 'created');
         })
         .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'busts' }, async payload => {
           if (!profileCache.has(payload.new.user_id)) { try { await refreshProfiles(sb); } catch {} }
+          if (unsubscribed) return;
           onBust?.(joinBust(payload.new), 'updated');
         })
-        .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'busts' }, payload => onBust?.(payload.old, 'deleted'))
+        .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'busts' }, payload => { if (!unsubscribed) onBust?.(payload.old, 'deleted'); })
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'profiles' }, payload => {
+          if (unsubscribed) return;
           profileCache.set(payload.new.id, payload.new);
           onProfile?.(toUser(payload.new), 'created');
         })
         .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles' }, payload => {
+          if (unsubscribed) return;
           profileCache.set(payload.new.id, payload.new);
           onProfile?.(toUser(payload.new), 'updated');
         })
         .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'profiles' }, payload => {
+          if (unsubscribed) return;
           profileCache.delete(payload.old.id);
           onProfile?.(payload.old, 'deleted');
         })
         .on('postgres_changes', { event: '*', schema: 'public', table: 'achievements' }, payload => {
+          if (unsubscribed) return;
           onAchievement?.(payload.eventType === 'DELETE' ? payload.old : payload.new, payload.eventType.toLowerCase());
         })
         .subscribe(status => {
