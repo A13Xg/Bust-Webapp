@@ -43,6 +43,8 @@ jobs:
         run: npm run format:check
       - name: Lint
         run: npm run lint
+      - name: Typecheck app
+        run: npm run typecheck
 
       # The Edge Functions are Deno TypeScript and are invisible to eslint/tsc,
       # which target the browser app. Without these two steps a type error or a
@@ -56,6 +58,8 @@ jobs:
 
       - name: Typecheck Edge Functions
         run: npm run typecheck:functions
+      - name: Test Edge Functions
+        run: npm run test:functions
 
       - name: Prepare database schema
         run: npm run db:migrate

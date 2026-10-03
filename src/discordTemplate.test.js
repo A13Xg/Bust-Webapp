@@ -27,6 +27,27 @@ const ctx = {
 };
 
 describe('discord templates', () => {
+  it('bounds expanded tokens and the combined embed text to Discord limits', () => {
+    const payload = buildBustDiscordPayload(
+      { ...ctx, note: 'n'.repeat(600), city: 'c'.repeat(2000) },
+      {
+        bust_title_template: '{{NOTE}}'.repeat(30),
+        bust_description_template: '{{NOTE}}'.repeat(500),
+        footer_text: 'f'.repeat(2048),
+      }
+    );
+    const embed = payload.embeds[0];
+    expect(embed.title.length).toBeLessThanOrEqual(256);
+    expect(embed.description.length).toBeLessThanOrEqual(4096);
+    expect(embed.fields[0].value.length).toBeLessThanOrEqual(1024);
+    expect(embed.footer.text.length).toBeLessThanOrEqual(2048);
+    const total =
+      embed.title.length +
+      embed.description.length +
+      embed.footer.text.length +
+      embed.fields.reduce((sum, field) => sum + field.name.length + field.value.length, 0);
+    expect(total).toBeLessThanOrEqual(6000);
+  });
   it('fills user, note, city', () => {
     expect(renderDiscordTemplate('{{USER}} in {{CITY}}: {{NOTE}}', ctx)).toBe('AlexG in Austin: Record pressure event');
   });

@@ -137,12 +137,32 @@ export function buildAchievementDiscordPayload(ctx, settings = {}) {
 }
 
 function assemblePayload(settings, { title, description, color, fields, thumbnailUrl, sentAt }) {
+  // Validate the rendered strings, not just the template source: repeated
+  // tokens can expand a short template beyond Discord's per-field limits.
+  // All textual embed fields together also share a 6000-character budget.
+  let remaining = 6000;
+  const fit = (value, limit) => {
+    const text = String(value || '').slice(0, Math.min(limit, remaining));
+    remaining -= text.length;
+    return text;
+  };
+  const safeTitle = fit(title, 256);
+  const safeDescription = fit(description, 4096);
+  const safeFields = fields
+    .slice(0, 25)
+    .map(field => ({
+      ...field,
+      name: fit(field.name, 256),
+      value: fit(field.value, 1024),
+    }))
+    .filter(field => field.name && field.value);
+  const footer = fit(settings.footer_text || DEFAULT_FOOTER_TEXT, 2048);
   const embed = {
-    title: title || undefined,
-    description: description || undefined,
+    title: safeTitle || undefined,
+    description: safeDescription || undefined,
     color: color ?? undefined,
-    fields: fields.length ? fields : undefined,
-    footer: { text: String(settings.footer_text || DEFAULT_FOOTER_TEXT) },
+    fields: safeFields.length ? safeFields : undefined,
+    footer: footer ? { text: footer } : undefined,
     timestamp: (sentAt instanceof Date && !Number.isNaN(sentAt.getTime()) ? sentAt : new Date()).toISOString(),
   };
   if (thumbnailUrl) embed.thumbnail = { url: thumbnailUrl };

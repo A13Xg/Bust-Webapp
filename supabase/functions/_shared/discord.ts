@@ -157,6 +157,9 @@ export function validateDiscordSettingsPatch(patch: Record<string, unknown>): Di
     if (text && field === 'webhook_url' && !DISCORD_WEBHOOK_URL_RE.test(text)) {
       return { ok: false, error: 'webhook_url must be a discord.com/api/webhooks/... URL' };
     }
+    if (text && field === 'bot_avatar_url' && !/^https:\/\//i.test(text)) {
+      return { ok: false, error: 'bot_avatar_url must use HTTPS' };
+    }
     value[field] = text;
   }
 
@@ -167,8 +170,7 @@ export function validateDiscordSettingsPatch(patch: Record<string, unknown>): Di
 export async function getDiscordSettings(admin: SupabaseClient): Promise<DiscordSettings> {
   const { data, error } = await admin.from('discord_settings').select('*').eq('id', 1).maybeSingle();
   if (error) {
-    console.error('[discord] could not load settings, treating as disabled', error.message);
-    return DEFAULT_DISCORD_SETTINGS;
+    throw new Error(`Could not load Discord settings: ${error.message}`);
   }
   return data ? { ...DEFAULT_DISCORD_SETTINGS, ...data } : DEFAULT_DISCORD_SETTINGS;
 }
@@ -194,9 +196,12 @@ async function postToDiscordWebhook(webhookUrl: string, payload: unknown) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(10_000),
   });
+  // Consume successful bodies too: wait=true returns a message, and leaving
+  // its stream open leaks resources across a backstop batch.
+  const text = await response.text();
   if (!response.ok) {
-    const text = await response.text().catch(() => '');
     throw new Error(`Discord webhook responded ${response.status}: ${text.slice(0, 300)}`);
   }
   return response;
@@ -227,6 +232,7 @@ async function finishDiscordEvent(
 }
 
 export type DiscordBustContext = {
+  occurredAt?: string | null;
   sourceId: string;
   actorId: string | null;
   username: string;
@@ -237,6 +243,7 @@ export type DiscordBustContext = {
 };
 
 export type DiscordAchievementContext = {
+  occurredAt?: string | null;
   sourceId: string;
   actorId: string | null;
   username: string;
@@ -274,10 +281,11 @@ export async function sendDiscordNotification(
     if (eventId == null) return { status: 'duplicate' };
 
     try {
+      const occurredAt = context.occurredAt ? new Date(context.occurredAt) : new Date();
       const payload =
         kind === 'bust'
-          ? buildBustDiscordPayload({ ...context, sentAt: new Date(), siteUrl: siteUrl() }, settings)
-          : buildAchievementDiscordPayload({ ...context, sentAt: new Date(), siteUrl: siteUrl() }, settings);
+          ? buildBustDiscordPayload({ ...context, sentAt: occurredAt, siteUrl: siteUrl() }, settings)
+          : buildAchievementDiscordPayload({ ...context, sentAt: occurredAt, siteUrl: siteUrl() }, settings);
 
       const response = await postToDiscordWebhook(webhookUrl, payload);
       await finishDiscordEvent(admin, eventId, { success: true, statusCode: response.status, error: null });

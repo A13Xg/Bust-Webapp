@@ -128,6 +128,12 @@ async function announce(
       { ...payload, data: { kind, sourceId } },
       { actorId }
     );
+    // sendToSubscriptions returns individual transport failures rather than
+    // throwing. Keep an all-failed attempt retryable without duplicating a
+    // partially successful send to devices that already received it.
+    if (result.delivered === 0 && result.failures.length > 0) {
+      throw new Error('No push service accepted the notification');
+    }
     await finishPushEvent(admin, eventId, result);
     return { status: 'sent', kind, sourceId, result };
   } catch (error) {
@@ -144,8 +150,9 @@ async function announce(
 
 export async function announceBust(
   admin: SupabaseClient,
-  bust: { id: string; user_id: string; note?: string | null; city?: string | null },
-  username?: string
+  bust: { id: string; user_id: string; note?: string | null; city?: string | null; timestamp?: string },
+  username?: string,
+  { skipPush = false } = {}
 ) {
   const name = username || (await usernameFor(admin, bust.user_id));
   const payload = buildBustNotification({
@@ -161,13 +168,16 @@ export async function announceBust(
   // to serialize them, and doing so would add the full webhook round trip to
   // every bust's latency for no benefit.
   const [outcome] = await Promise.all([
-    announce(admin, 'bust', bust.id, bust.user_id, payload),
+    skipPush
+      ? Promise.resolve({ status: 'duplicate' as const, kind: 'bust', sourceId: bust.id })
+      : announce(admin, 'bust', bust.id, bust.user_id, payload),
     sendDiscordNotification(admin, 'bust', {
       sourceId: bust.id,
       actorId: bust.user_id,
       username: name,
       note: bust.note,
       city: bust.city,
+      occurredAt: bust.timestamp,
       pushTitle: payload.title,
       pushBody: payload.body,
     }),
@@ -178,7 +188,8 @@ export async function announceBust(
 export async function announceAchievement(
   admin: SupabaseClient,
   achievement: { id: string; user_id: string; achievement_type: string; unlocked_at?: string | null },
-  username?: string
+  username?: string,
+  { skipPush = false } = {}
 ) {
   const meta = achievementById.get(achievement.achievement_type) as
     { name?: string; tier?: string; points?: number; accent?: string } | undefined;
@@ -206,9 +217,17 @@ export async function announceAchievement(
     tier: meta.tier,
     points: meta.points,
     accent: meta.accent,
+    occurredAt: achievement.unlocked_at,
     pushTitle: payload.title,
     pushBody: payload.body,
   };
+
+  // A Discord-only retry must not reserve a fresh push cooldown slot or
+  // resurrect a sibling that was deliberately suppressed on mobile.
+  if (skipPush) {
+    await sendDiscordNotification(admin, 'achievement', discordContext);
+    return { status: 'duplicate' as const, kind: 'achievement', sourceId: achievement.id };
+  }
 
   // One achievement PUSH per actor per cooldown window — a lock-screen pacing
   // rule that has nothing to do with Discord, so a suppressed slot still gets
