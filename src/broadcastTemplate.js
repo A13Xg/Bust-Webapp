@@ -14,10 +14,12 @@
  */
 import { achievements } from './rules.js';
 import { INACTIVITY_MESSAGE_CATALOG, seedIndex } from './notificationMessages.js';
+import { renderTokens, unknownTemplateTokens } from './templateTokens.js';
 
 const achievementById = new Map(achievements.map(item => [item.id, item]));
 
-function partsFor(date, timeZone) {
+/** Shared with discordTemplate.js so {{DATE}}/{{TIME}} render identically everywhere. */
+export function partsFor(date, timeZone) {
   const when = date instanceof Date && !Number.isNaN(date.getTime()) ? date : new Date();
   const zone = timeZone || 'UTC';
   const pick = options => {
@@ -51,30 +53,17 @@ export const BROADCAST_TOKENS = {
   ACHIEVEMENT: (ctx, arg) => achievementById.get(String(arg || '').trim())?.name ?? null,
 };
 
-const TOKEN_RE = /\{\{\s*([A-Za-z_]+)(?::([^}]*?))?\s*\}\}/g;
-
 /**
  * Render one template for one recipient. Single pass: a token that appears
  * inside a substituted value is left alone rather than expanded again.
  */
 export function renderBroadcast(template, context = {}) {
-  return String(template ?? '').replace(TOKEN_RE, (match, name, arg) => {
-    const resolver = BROADCAST_TOKENS[String(name).toUpperCase()];
-    if (!resolver) return match;
-    const value = resolver(context, arg);
-    return value == null ? match : String(value);
-  });
+  return renderTokens(BROADCAST_TOKENS, template, context);
 }
 
 /** Tokens the renderer would leave literal — surfaced in the confirm dialog. */
 export function unknownTokens(template) {
-  const found = [];
-  for (const match of String(template ?? '').matchAll(TOKEN_RE)) {
-    const resolver = BROADCAST_TOKENS[String(match[1]).toUpperCase()];
-    const unresolved = !resolver || resolver({ recipient: 'x', sender: 'x', crew: 0 }, match[2]) == null;
-    if (unresolved && !found.includes(match[0])) found.push(match[0]);
-  }
-  return found;
+  return unknownTemplateTokens(BROADCAST_TOKENS, template, { recipient: 'x', sender: 'x', crew: 0 });
 }
 
 /** Cheat sheet rendered in the debug menu's Notify tab. */

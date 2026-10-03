@@ -16,13 +16,14 @@
  * timestamp.
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import type { Database } from '../_shared/database.types.ts';
 import { corsHeaders, json } from '../_shared/push.ts';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const noContent = () => new Response(null, { status: 204, headers: corsHeaders });
 
-Deno.serve(async req => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') return json(405, { error: 'Method not allowed' });
 
@@ -38,7 +39,7 @@ Deno.serve(async req => {
     // a 500.
     if (!UUID_RE.test(receiptId)) return noContent();
 
-    const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+    const admin = createClient<Database>(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
     // One RPC rather than an update, because an ack does two things that must
     // not drift apart: it stamps the delivery, and it credits the ENDPOINT that
     // carried it as alive. record_push_ack applies the `acked_at is null` replay

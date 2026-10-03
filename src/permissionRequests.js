@@ -16,6 +16,13 @@
  *
  * So the UI offers RETRY exactly when `isRetryable` says so, and otherwise
  * shows a dead end with a pointer at site settings.
+ *
+ * iOS note: one Apple Developer Forums report describes a geolocation prompt
+ * being routed to Safari instead of a Home Screen PWA (iOS 15.1.1). This does
+ * not establish a current, general permission-persistence rule. The app asks
+ * for location for each bust and already handles denial, dismissal, timeout,
+ * and unavailable results; do not infer a persisted grant from a prior call.
+ * See PROJECT.md §12 for the scope and source link.
  */
 
 export const GEO_TIMEOUT_MS = 15000;

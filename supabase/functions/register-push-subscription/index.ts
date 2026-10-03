@@ -11,10 +11,11 @@
  * worker in one round trip, so "did it actually work" has a real answer.
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import type { Database } from '../_shared/database.types.ts';
 import { reconcileInactivityReminderState } from '../../../src/inactivityReminder.js';
 import { corsHeaders, json, sendToSubscriptions } from '../_shared/push.ts';
 
-Deno.serve(async req => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') return json(405, { error: 'Method not allowed' });
 
@@ -26,7 +27,7 @@ Deno.serve(async req => {
     if (!supabaseUrl || !anonKey || !serviceRoleKey) throw new Error('Supabase function environment is incomplete');
     if (!authorization) return json(401, { error: 'Authentication required' });
 
-    const authClient = createClient(supabaseUrl, anonKey, {
+    const authClient = createClient<Database>(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authorization } },
       auth: { persistSession: false },
     });
@@ -40,7 +41,7 @@ Deno.serve(async req => {
     const auth = typeof sub?.keys?.auth === 'string' ? sub.keys.auth : '';
     if (!endpoint || !p256dh || !auth) return json(400, { error: 'Invalid push subscription payload' });
 
-    const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+    const admin = createClient<Database>(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
     const userId = authData.user.id;
     const userAgent = typeof payload?.userAgent === 'string' ? payload.userAgent.slice(0, 256) : null;
     const nowIso = new Date().toISOString();
@@ -56,7 +57,7 @@ Deno.serve(async req => {
     // demonstrably alive.
     const { error: upsertError } = await admin.from('push_subscriptions').upsert(
       [{ user_id: userId, endpoint, p256dh, auth, user_agent: userAgent, updated_at: nowIso, failure_count: 0 }],
-      { onConflict: 'endpoint' }
+      { onConflict: 'endpoint' },
     );
     if (upsertError) throw new Error(upsertError.message);
 
@@ -91,11 +92,11 @@ Deno.serve(async req => {
       latestBustAt: profileResult.data?.last_bust_timestamp || null,
       state: reminderStateResult.data
         ? {
-            cycleBustAt: reminderStateResult.data.cycle_bust_at,
-            scheduledFor: reminderStateResult.data.scheduled_for,
-            lastSentAt: reminderStateResult.data.last_sent_at,
-            lastMessageIndex: reminderStateResult.data.last_message_index,
-          }
+          cycleBustAt: reminderStateResult.data.cycle_bust_at,
+          scheduledFor: reminderStateResult.data.scheduled_for,
+          lastSentAt: reminderStateResult.data.last_sent_at,
+          lastMessageIndex: reminderStateResult.data.last_message_index,
+        }
         : null,
     });
 
@@ -123,13 +124,13 @@ Deno.serve(async req => {
       .maybeSingle();
     const health = healthRow
       ? {
-          subscriptionId: healthRow.id,
-          createdAt: healthRow.created_at,
-          lastSuccessAt: healthRow.last_success_at,
-          lastAckAt: healthRow.last_ack_at,
-          unackedCount: healthRow.unacked_count ?? 0,
-          failureCount: healthRow.failure_count ?? 0,
-        }
+        subscriptionId: healthRow.id,
+        createdAt: healthRow.created_at,
+        lastSuccessAt: healthRow.last_success_at,
+        lastAckAt: healthRow.last_ack_at,
+        unackedCount: healthRow.unacked_count ?? 0,
+        failureCount: healthRow.failure_count ?? 0,
+      }
       : null;
 
     let test = null;
@@ -149,7 +150,12 @@ Deno.serve(async req => {
         kind: 'test',
         data: { kind: 'test' },
       }, { actorId: userId });
-      test = { delivered: result.delivered, attempted: result.attempted, pruned: result.pruned, failures: result.failures };
+      test = {
+        delivered: result.delivered,
+        attempted: result.attempted,
+        pruned: result.pruned,
+        failures: result.failures,
+      };
     }
 
     return json(200, { ok: true, endpoint, test, health });

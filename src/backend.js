@@ -1,89 +1,13 @@
 /*
- * Unified backend adapter.
- * - Server mode (default): talks to the Express API + WebSocket (npm run dev).
- * - Static mode: when VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY are set at build
- *   time, talks to Supabase directly (auth, postgrest, realtime) — no Node server.
- *   This is what makes a GitHub Pages deployment work.
+ * Backend adapter. Talks to Supabase directly (auth, postgrest, realtime) —
+ * requires VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY at build time. This is
+ * what makes a GitHub Pages deployment work.
  */
 import { timeBucket } from './rules.js';
 
 const SUPA_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPA_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 const WEB_PUSH_PUBLIC_KEY = import.meta.env.VITE_WEB_PUSH_PUBLIC_KEY || '';
-export const isStatic = Boolean(SUPA_URL && SUPA_KEY);
-const RECONNECT_JITTER_MS = 700;
-
-/* ---------------------------------- server mode ---------------------------------- */
-const authHeaders = () => ({ 'Content-Type': 'application/json', Authorization: 'Bearer ' + (localStorage.getItem('bust_token') || '') });
-async function rest(path, options = {}) {
-  const res = await fetch('/api' + path, { ...options, headers: { ...authHeaders(), ...(options.headers || {}) } });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'Request failed');
-  return data;
-}
-
-const serverBackend = {
-  async me() { return (await rest('/me')).user; },
-  async login({ username, password }) { const d = await rest('/login', { method: 'POST', body: JSON.stringify({ username, password }) }); localStorage.setItem('bust_token', d.token); return d.user; },
-  async signup({ username, password, inviteCode }) { const d = await rest('/signup', { method: 'POST', body: JSON.stringify({ username, password, inviteCode }) }); localStorage.setItem('bust_token', d.token); return d.user; },
-  async logout() { localStorage.removeItem('bust_token'); },
-  async deleteAccount() { await rest('/account', { method: 'DELETE' }); localStorage.removeItem('bust_token'); },
-  async dashboard() { return rest('/dashboard'); },
-  async bust(payload) { return (await rest('/bust', { method: 'POST', body: JSON.stringify(payload) })).bust; },
-  async patchBustNote(id, note) { return (await rest(`/bust/${encodeURIComponent(id)}/note`, { method: 'PATCH', body: JSON.stringify({ note }) })).bust; },
-  async recentBusts(limit = 60) { return (await rest(`/busts/recent?limit=${encodeURIComponent(limit)}`)).busts; },
-  async reconcileAchievements() { return await rest('/achievements/reconcile', { method: 'POST' }); },
-  async saveAchievements() { return (await this.reconcileAchievements()).achievements; },
-  async registerPushSubscription(subscription, meta = {}) {
-    return await rest('/push-subscriptions', { method: 'POST', body: JSON.stringify({ subscription, ...meta }) });
-  },
-  // Server mode has no VAPID sender; the open tab notifies locally instead.
-  async notifyEvent() { return { ok: false, reason: 'unsupported_in_server_mode' }; },
-  async broadcastTestNotification() { return { ok: false, reason: 'unsupported_in_server_mode' }; },
-  async adminSetPassword() { return { ok: false, reason: 'unsupported_in_server_mode' }; },
-  webPushPublicKey() { return WEB_PUSH_PUBLIC_KEY; },
-  async patchProfile(patch) { return (await rest('/profile', { method: 'PATCH', body: JSON.stringify(patch) })).user; },
-  subscribe({ onBust, onProfile, onStatus }) {
-    let ws = null, closed = false, delay = 1000, reconnectTimer = null;
-    const clearReconnect = () => {
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = null;
-      }
-    };
-    const scheduleReconnect = () => {
-      clearReconnect();
-      const base = delay = Math.min(delay * 2, 15000);
-      const jitter = Math.floor(Math.random() * RECONNECT_JITTER_MS);
-      reconnectTimer = setTimeout(connect, base + jitter);
-    };
-    const connect = () => {
-      if (closed) return;
-      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
-      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      ws = new WebSocket(`${proto}://${location.host}/ws?token=${localStorage.getItem('bust_token')}`);
-      ws.onopen = () => { clearReconnect(); delay = 1000; onStatus?.('SUBSCRIBED'); };
-      ws.onmessage = e => {
-        try {
-          const msg = JSON.parse(e.data);
-          if (msg.type === 'bust' || msg.type === 'bust.created' || msg.type === 'bust.updated') {
-            onBust?.(msg.bust, msg.type === 'bust.updated' ? 'updated' : 'created');
-          }
-          if (msg.type === 'profile' || msg.type === 'profile.updated') onProfile?.(msg.user);
-        } catch { /* ignore malformed frames */ }
-      };
-      ws.onclose = event => {
-        ws = null;
-        if (closed || event.code === 4001) { onStatus?.('CLOSED'); return; }
-        onStatus?.('TIMED_OUT');
-        scheduleReconnect();
-      };
-      ws.onerror = () => { onStatus?.('CHANNEL_ERROR'); try { ws.close(); } catch {} };
-    };
-    connect();
-    return () => { closed = true; clearReconnect(); try { ws?.close(); } catch {} ws = null; onStatus?.('CLOSED'); };
-  }
-};
 
 /* ---------------------------------- static / Supabase mode ---------------------------------- */
 let supa = null;
@@ -298,6 +222,38 @@ const staticBackend = {
     if (data?.error) throw new Error(data.error);
     return data || { ok: true };
   },
+  async getDiscordSettings() {
+    const sb = await getSupa();
+    const { data, error } = await sb.functions.invoke('admin-discord-settings', { body: { action: 'get' } });
+    if (error) {
+      const detail = await readFunctionError(error);
+      throw new Error(detail || error.message || 'Could not load Discord settings');
+    }
+    if (data?.error) throw new Error(data.error);
+    return data || { ok: true, settings: null, defaults: null };
+  },
+  async updateDiscordSettings(patch = {}) {
+    const sb = await getSupa();
+    const { data, error } = await sb.functions.invoke('admin-discord-settings', { body: { action: 'update', patch } });
+    if (error) {
+      const detail = await readFunctionError(error);
+      throw new Error(detail || error.message || 'Could not update Discord settings');
+    }
+    if (data?.error) throw new Error(data.error);
+    return data || { ok: true };
+  },
+  async sendDiscordTestMessage({ kind, settings } = {}) {
+    const sb = await getSupa();
+    const { data, error } = await sb.functions.invoke('discord-test-notification', {
+      body: { kind: kind === 'achievement' ? 'achievement' : 'bust', settings: settings || undefined },
+    });
+    if (error) {
+      const detail = await readFunctionError(error);
+      throw new Error(detail || error.message || 'Discord test send failed');
+    }
+    if (data?.error) throw new Error(data.error);
+    return data || { ok: true };
+  },
   webPushPublicKey() { return WEB_PUSH_PUBLIC_KEY; },
   async patchProfile(patch) {
     const sb = await getSupa();
@@ -342,4 +298,4 @@ const staticBackend = {
   }
 };
 
-export const backend = isStatic ? staticBackend : serverBackend;
+export const backend = staticBackend;

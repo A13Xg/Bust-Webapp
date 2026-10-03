@@ -1,22 +1,27 @@
 /*
- * Turns a bust or achievement row into a crew-wide push, exactly once.
+ * Turns a bust or achievement row into a crew-wide push AND a Discord webhook
+ * message, each tracked independently.
  *
  * Both callers share this: `notify-event` (the busting client, for instant
  * delivery) and `dispatch-push-backstop` (the scheduled sweep, for when that
  * client never made the call). The push_events ledger is what keeps them from
- * double-announcing the same row.
+ * double-announcing the same row for push; `discord_events` (see
+ * `_shared/discord.ts`) does the same job for Discord, independently, since
+ * Discord delivery is not subject to push's cooldown/slot pacing.
  */
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import type { Database } from './database.types.ts';
 import { achievements } from '../../../src/rules.js';
 import { buildAchievementNotification, buildBustNotification } from '../../../src/notificationMessages.js';
 import { achievementSlotId } from '../../../src/pushCooldown.js';
+import { sendDiscordNotification } from './discord.ts';
 import {
   claimPushEvent,
+  type DeliveryResult,
   finishPushEvent,
   releasePushEvent,
   sendToSubscriptions,
   subscriptionsForCrew,
-  type DeliveryResult,
 } from './push.ts';
 
 const achievementById = new Map(achievements.map((item: { id: string }) => [item.id, item]));
@@ -32,10 +37,10 @@ export type AnnounceOutcome =
  * cooldown lapsed — turning the cap into a delay.
  */
 async function claimWithoutSending(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   kind: 'bust' | 'achievement',
   sourceId: string,
-  actorId: string
+  actorId: string,
 ) {
   const eventId = await claimPushEvent(admin, kind, sourceId, actorId);
   if (eventId != null) {
@@ -65,10 +70,10 @@ const BURST_WINDOW_MS = 2 * 60 * 1000;
  * thing the sweep checks.
  */
 async function retireUnannouncedSiblings(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   actorId: string,
   anchorUnlockedAt: string | null | undefined,
-  announcedId: string
+  announcedId: string,
 ) {
   const anchor = anchorUnlockedAt ? new Date(anchorUnlockedAt).getTime() : Date.now();
   if (!Number.isFinite(anchor)) return;
@@ -89,13 +94,13 @@ async function retireUnannouncedSiblings(
   }
 }
 
-async function usernameFor(admin: SupabaseClient, userId: string) {
+async function usernameFor(admin: SupabaseClient<Database>, userId: string) {
   const { data } = await admin.from('profiles').select('username').eq('id', userId).maybeSingle();
   return data?.username || 'Someone';
 }
 
 async function announce(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   kind: 'bust' | 'achievement',
   sourceId: string,
   actorId: string,
@@ -103,7 +108,7 @@ async function announce(
   // A cooldown slot held on the caller's behalf. Released alongside the row's own
   // claim if the send fails, so one transient failure does not burn the whole
   // window and lock the backstop out of retrying.
-  slotEventId: number | null = null
+  slotEventId: number | null = null,
 ): Promise<AnnounceOutcome> {
   const eventId = await claimPushEvent(admin, kind, sourceId, actorId);
   if (eventId == null) {
@@ -118,7 +123,18 @@ async function announce(
       return { status: 'no-recipients', kind, sourceId };
     }
 
-    const result = await sendToSubscriptions(admin, subscriptions, { ...payload, data: { kind, sourceId } }, { actorId });
+    const result = await sendToSubscriptions(
+      admin,
+      subscriptions,
+      { ...payload, data: { kind, sourceId } },
+      { actorId },
+    );
+    // sendToSubscriptions returns individual transport failures rather than
+    // throwing. Keep an all-failed attempt retryable without duplicating a
+    // partially successful send to devices that already received it.
+    if (result.delivered === 0 && result.failures.length > 0) {
+      throw new Error('No push service accepted the notification');
+    }
     await finishPushEvent(admin, eventId, result);
     return { status: 'sent', kind, sourceId, result };
   } catch (error) {
@@ -134,9 +150,10 @@ async function announce(
 }
 
 export async function announceBust(
-  admin: SupabaseClient,
-  bust: { id: string; user_id: string; note?: string | null; city?: string | null },
-  username?: string
+  admin: SupabaseClient<Database>,
+  bust: { id: string; user_id: string; note?: string | null; city?: string | null; timestamp?: string },
+  username?: string,
+  { skipPush = false } = {},
 ) {
   const name = username || (await usernameFor(admin, bust.user_id));
   const payload = buildBustNotification({
@@ -145,40 +162,50 @@ export async function announceBust(
     bustId: bust.id,
     city: bust.city,
   });
-  return announce(admin, 'bust', bust.id, bust.user_id, payload);
+  // Independent of the push outcome above (sent, no-recipients, duplicate —
+  // all mean "this bust happened"): Discord gets its own exactly-once ledger,
+  // see _shared/discord.ts. Run alongside the push send rather than after it —
+  // sendDiscordNotification never throws, so there's no error-handling reason
+  // to serialize them, and doing so would add the full webhook round trip to
+  // every bust's latency for no benefit.
+  const [outcome] = await Promise.all([
+    skipPush
+      ? Promise.resolve({ status: 'duplicate' as const, kind: 'bust', sourceId: bust.id })
+      : announce(admin, 'bust', bust.id, bust.user_id, payload),
+    sendDiscordNotification(admin, 'bust', {
+      sourceId: bust.id,
+      actorId: bust.user_id,
+      username: name,
+      note: bust.note,
+      city: bust.city,
+      occurredAt: bust.timestamp,
+      pushTitle: payload.title,
+      pushBody: payload.body,
+    }),
+  ]);
+  return outcome;
 }
 
 export async function announceAchievement(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   achievement: { id: string; user_id: string; achievement_type: string; unlocked_at?: string | null },
-  username?: string
+  username?: string,
+  { skipPush = false } = {},
 ) {
-  const meta = achievementById.get(achievement.achievement_type) as
-    | { name?: string; tier?: string }
-    | undefined;
+  const meta = achievementById.get(achievement.achievement_type) as {
+    name?: string;
+    tier?: string;
+    points?: number;
+    accent?: string;
+  } | undefined;
   // An id outside the catalog means stale or hand-written data. Claim it anyway
   // so the scheduled sweep evaluates it once rather than on every run for the
-  // whole lookback window, then decline to announce it.
+  // whole lookback window, then decline to announce it (nothing meaningful to
+  // show on Discord either, since there is no catalog name/tier to display).
   if (!meta) {
     await claimWithoutSending(admin, 'achievement', achievement.id, achievement.user_id);
     return { status: 'unknown' as const, kind: 'achievement', sourceId: achievement.id };
   }
-
-  // One achievement push per actor per cooldown window. Claiming the slot is
-  // what makes this safe under concurrency: the client fires its announcements
-  // in parallel, so a read-then-check would let a whole burst through. The
-  // unique index on (kind, source_id) arbitrates instead.
-  const slotEventId = await claimPushEvent(
-    admin,
-    'achievement',
-    achievementSlotId(achievement.user_id, Date.now()),
-    achievement.user_id
-  );
-  if (slotEventId == null) {
-    await claimWithoutSending(admin, 'achievement', achievement.id, achievement.user_id);
-    return { status: 'suppressed' as const, kind: 'achievement', sourceId: achievement.id };
-  }
-  await finishPushEvent(admin, slotEventId, { attempted: 0, delivered: 0, pruned: 0, failures: [] });
 
   const name = username || (await usernameFor(admin, achievement.user_id));
   const payload = buildAchievementNotification({
@@ -187,7 +214,54 @@ export async function announceAchievement(
     achievementId: achievement.achievement_type,
     tier: meta.tier,
   });
-  const outcome = await announce(admin, 'achievement', achievement.id, achievement.user_id, payload, slotEventId);
+  const discordContext = {
+    sourceId: achievement.id,
+    actorId: achievement.user_id,
+    username: name,
+    achievementName: meta.name,
+    tier: meta.tier,
+    points: meta.points,
+    accent: meta.accent,
+    occurredAt: achievement.unlocked_at,
+    pushTitle: payload.title,
+    pushBody: payload.body,
+  };
+
+  // A Discord-only retry must not reserve a fresh push cooldown slot or
+  // resurrect a sibling that was deliberately suppressed on mobile.
+  if (skipPush) {
+    await sendDiscordNotification(admin, 'achievement', discordContext);
+    return { status: 'duplicate' as const, kind: 'achievement', sourceId: achievement.id };
+  }
+
+  // One achievement PUSH per actor per cooldown window — a lock-screen pacing
+  // rule that has nothing to do with Discord, so a suppressed slot still gets
+  // its own Discord message below. Claiming the slot is what makes the push
+  // side safe under concurrency: the client fires its announcements in
+  // parallel, so a read-then-check would let a whole burst through. The
+  // unique index on (kind, source_id) arbitrates instead.
+  const slotEventId = await claimPushEvent(
+    admin,
+    'achievement',
+    achievementSlotId(achievement.user_id, Date.now()),
+    achievement.user_id,
+  );
+  if (slotEventId == null) {
+    await Promise.all([
+      claimWithoutSending(admin, 'achievement', achievement.id, achievement.user_id),
+      sendDiscordNotification(admin, 'achievement', discordContext),
+    ]);
+    return { status: 'suppressed' as const, kind: 'achievement', sourceId: achievement.id };
+  }
+  await finishPushEvent(admin, slotEventId, { attempted: 0, delivered: 0, pruned: 0, failures: [] });
+
+  // Same reasoning as announceBust: these two are independent and
+  // sendDiscordNotification never throws, so run them concurrently instead of
+  // adding the Discord round trip to every achievement's latency.
+  const [outcome] = await Promise.all([
+    announce(admin, 'achievement', achievement.id, achievement.user_id, payload, slotEventId),
+    sendDiscordNotification(admin, 'achievement', discordContext),
+  ]);
 
   // Only after a send actually went out. On 'failed' the claim was released so
   // the sweep can retry this row, and retiring its siblings then would throw
