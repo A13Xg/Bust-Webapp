@@ -7,16 +7,20 @@
  * requirement is "every bust, every achievement" and this module is what makes
  * that true independently of how push notifications are paced.
  *
- * `discord_events` is its own exactly-once ledger (see
+ * `discord_events` is its own deduplication ledger (see
  * supabase/migrations/20260930010000_discord_webhook.sql) so a retried
- * `notify-event` call, or a race with `dispatch-push-backstop`, can never post
- * the same bust or achievement to the channel twice.
+ * `notify-event` call, or a race with `dispatch-push-backstop`, does not post
+ * duplicate messages during ordinary retries and concurrent sends. A process
+ * failure after Discord accepts a message but before the database records
+ * success can still cause a duplicate on retry; this is best-effort
+ * deduplication, not an exactly-once guarantee.
  *
  * Deliberately never imported by `dispatch-inactivity-reminders` — idle nags
  * must never reach Discord. The only callers are the two functions that route
  * through `announceBust` / `announceAchievement` in `_shared/announce.ts`.
  */
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import type { Database } from './database.types.ts';
 import { claimEvent, releaseEvent } from './eventLedger.ts';
 import type { EventKind } from './eventLedger.ts';
 import {
@@ -167,7 +171,7 @@ export function validateDiscordSettingsPatch(patch: Record<string, unknown>): Di
 }
 
 /** The one settings row (id = 1). Missing row means "never configured". */
-export async function getDiscordSettings(admin: SupabaseClient): Promise<DiscordSettings> {
+export async function getDiscordSettings(admin: SupabaseClient<Database>): Promise<DiscordSettings> {
   const { data, error } = await admin.from('discord_settings').select('*').eq('id', 1).maybeSingle();
   if (error) {
     throw new Error(`Could not load Discord settings: ${error.message}`);
@@ -207,18 +211,18 @@ async function postToDiscordWebhook(webhookUrl: string, payload: unknown) {
   return response;
 }
 
-function claimDiscordEvent(admin: SupabaseClient, kind: EventKind, sourceId: string, actorId: string | null) {
+function claimDiscordEvent(admin: SupabaseClient<Database>, kind: EventKind, sourceId: string, actorId: string | null) {
   return claimEvent(admin, 'discord_events', kind, sourceId, actorId);
 }
 
-async function releaseDiscordEvent(admin: SupabaseClient, eventId: number) {
+async function releaseDiscordEvent(admin: SupabaseClient<Database>, eventId: number) {
   await releaseEvent(admin, 'discord_events', eventId);
 }
 
 async function finishDiscordEvent(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   eventId: number,
-  outcome: { success: boolean; statusCode: number | null; error: string | null }
+  outcome: { success: boolean; statusCode: number | null; error: string | null },
 ) {
   await admin
     .from('discord_events')
@@ -255,18 +259,21 @@ export type DiscordAchievementContext = {
   pushBody: string;
 };
 
-export type DiscordOutcome =
-  { status: 'disabled' | 'unconfigured' | 'duplicate' } | { status: 'sent' } | { status: 'failed'; error: string };
+export type DiscordOutcome = { status: 'disabled' | 'unconfigured' | 'duplicate' } | { status: 'sent' } | {
+  status: 'failed';
+  error: string;
+};
 
 /**
- * Post a webhook message for one bust or achievement, exactly once. Always
+ * Post a webhook message for one bust or achievement, with ledger-based
+ * deduplication for ordinary retries. Always
  * resolves — never throws — so a Discord outage can never take down the push
  * pipeline that calls this alongside it.
  */
 export async function sendDiscordNotification(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   kind: EventKind,
-  context: DiscordBustContext | DiscordAchievementContext
+  context: DiscordBustContext | DiscordAchievementContext,
 ): Promise<DiscordOutcome> {
   try {
     const settings = await getDiscordSettings(admin);
@@ -282,10 +289,9 @@ export async function sendDiscordNotification(
 
     try {
       const occurredAt = context.occurredAt ? new Date(context.occurredAt) : new Date();
-      const payload =
-        kind === 'bust'
-          ? buildBustDiscordPayload({ ...context, sentAt: occurredAt, siteUrl: siteUrl() }, settings)
-          : buildAchievementDiscordPayload({ ...context, sentAt: occurredAt, siteUrl: siteUrl() }, settings);
+      const payload = kind === 'bust'
+        ? buildBustDiscordPayload({ ...context, sentAt: occurredAt, siteUrl: siteUrl() }, settings)
+        : buildAchievementDiscordPayload({ ...context, sentAt: occurredAt, siteUrl: siteUrl() }, settings);
 
       const response = await postToDiscordWebhook(webhookUrl, payload);
       await finishDiscordEvent(admin, eventId, { success: true, statusCode: response.status, error: null });
@@ -317,7 +323,7 @@ export async function sendDiscordNotification(
 export async function sendDiscordTestMessage(
   kind: EventKind,
   settings: DiscordSettings,
-  sample: Record<string, unknown> = {}
+  sample: Record<string, unknown> = {},
 ) {
   const webhookUrl = resolveWebhookUrl(settings);
   if (!webhookUrl) throw new Error('No webhook URL is configured (set one here, or DISCORD_WEBHOOK_URL).');
@@ -333,17 +339,17 @@ export async function sendDiscordTestMessage(
     points: 50,
     accent: '#ffd166',
     pushTitle: kind === 'bust' ? 'TestCrewMember just busted' : 'TestCrewMember unlocked Sample Achievement',
-    pushBody:
-      kind === 'bust'
-        ? 'Cooldown started. The rest of you are just standing there.'
-        : 'Awarded for behavior nobody asked to be tracked.',
+    pushBody: kind === 'bust'
+      ? 'Cooldown started. The rest of you are just standing there.'
+      : 'Awarded for behavior nobody asked to be tracked.',
     sentAt: new Date(),
     siteUrl: siteUrl(),
     ...sample,
   };
 
-  const payload =
-    kind === 'bust' ? buildBustDiscordPayload(context, settings) : buildAchievementDiscordPayload(context, settings);
+  const payload = kind === 'bust'
+    ? buildBustDiscordPayload(context, settings)
+    : buildAchievementDiscordPayload(context, settings);
   const response = await postToDiscordWebhook(webhookUrl, payload);
   return { ok: true, status: response.status };
 }

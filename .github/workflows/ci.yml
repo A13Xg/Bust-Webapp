@@ -11,26 +11,8 @@ permissions:
 
 jobs:
   test-build:
-    name: Test, database check, and build
+    name: Test and build
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: bust
-          POSTGRES_PASSWORD: bust
-          POSTGRES_DB: bust_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U bust -d bust_test"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      DATABASE_URL: postgresql://bust:bust@127.0.0.1:5432/bust_test
-      PGSSLMODE: disable
-      JWT_SECRET: ci-test-secret
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -47,8 +29,9 @@ jobs:
         run: npm run typecheck
 
       # The Edge Functions are Deno TypeScript and are invisible to eslint/tsc,
-      # which target the browser app. Without these two steps a type error or a
-      # bad import in supabase/functions/ only ever surfaces in production.
+      # which target the browser app. Without these steps a type error, a bad
+      # import, or a wrong table/column name in supabase/functions/ only ever
+      # surfaces in production.
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
@@ -61,8 +44,6 @@ jobs:
       - name: Test Edge Functions
         run: npm run test:functions
 
-      - name: Prepare database schema
-        run: npm run db:migrate
       - name: Unit tests
         run: npm test -- --reporter=default --reporter=json --outputFile=test-results.json
       - name: Upload unit test report
@@ -75,8 +56,6 @@ jobs:
           retention-days: 7
       - name: Test coverage
         run: npm run test:coverage
-      - name: Database connection check
-        run: npm run db:check
       - name: Build webpage
         env:
           GHPAGES_BASE: /${{ github.event.repository.name }}/

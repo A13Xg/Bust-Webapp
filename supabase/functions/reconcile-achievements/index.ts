@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import type { Database } from '../_shared/database.types.ts';
 import { achievements, computeAchievementUnlocks } from '../../../src/rules.js';
 import { fetchAllPages } from '../../../src/fetchAllPages.js';
 
@@ -6,9 +7,9 @@ const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
-const validAchievementIds = new Set(achievements.map(item => item.id));
+const validAchievementIds = new Set(achievements.map((item) => item.id));
 
-Deno.serve(async req => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
@@ -31,7 +32,7 @@ Deno.serve(async req => {
       });
     }
 
-    const authClient = createClient(supabaseUrl, anonKey, {
+    const authClient = createClient<Database>(supabaseUrl, anonKey, {
       global: { headers: { Authorization: authorization } },
       auth: { persistSession: false },
     });
@@ -43,27 +44,35 @@ Deno.serve(async req => {
       });
     }
 
-    const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+    const admin = createClient<Database>(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
     const userId = authData.user.id;
 
     const [profileResult, busts, existing, profiles] = await Promise.all([
       admin.from('profiles').select('id, created_at').eq('id', userId).single(),
-      fetchAllPages((from, to) => admin.from('busts').select('*').order('timestamp', { ascending: true }).range(from, to)),
-      fetchAllPages((from, to) => admin.from('achievements').select('*').order('unlocked_at', { ascending: true }).range(from, to)),
-      fetchAllPages((from, to) => admin.from('profiles').select('id').order('created_at', { ascending: true }).range(from, to)),
+      fetchAllPages((from, to) =>
+        admin.from('busts').select('*').order('timestamp', { ascending: true }).range(from, to)
+      ),
+      fetchAllPages((from, to) =>
+        admin.from('achievements').select('*').order('unlocked_at', { ascending: true }).range(from, to)
+      ),
+      fetchAllPages((from, to) =>
+        admin.from('profiles').select('id').order('created_at', { ascending: true }).range(from, to)
+      ),
     ]);
 
-    if (profileResult.error || !profileResult.data) throw new Error(profileResult.error?.message || 'Profile not found');
+    if (profileResult.error || !profileResult.data) {
+      throw new Error(profileResult.error?.message || 'Profile not found');
+    }
 
     const earned = computeAchievementUnlocks(userId, busts, existing, {
       createdAt: profileResult.data.created_at,
       userCount: profiles.length,
-    }).filter(id => validAchievementIds.has(id));
+    }).filter((id) => validAchievementIds.has(id));
 
     if (earned.length) {
       const { error } = await admin.from('achievements').upsert(
-        earned.map(achievement_type => ({ user_id: userId, achievement_type })),
-        { onConflict: 'user_id,achievement_type', ignoreDuplicates: true }
+        earned.map((achievement_type) => ({ user_id: userId, achievement_type })),
+        { onConflict: 'user_id,achievement_type', ignoreDuplicates: true },
       );
       if (error) throw new Error(error.message);
     }

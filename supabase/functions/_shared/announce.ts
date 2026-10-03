@@ -1,6 +1,6 @@
 /*
  * Turns a bust or achievement row into a crew-wide push AND a Discord webhook
- * message, exactly once each.
+ * message, each tracked independently.
  *
  * Both callers share this: `notify-event` (the busting client, for instant
  * delivery) and `dispatch-push-backstop` (the scheduled sweep, for when that
@@ -10,17 +10,18 @@
  * Discord delivery is not subject to push's cooldown/slot pacing.
  */
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import type { Database } from './database.types.ts';
 import { achievements } from '../../../src/rules.js';
 import { buildAchievementNotification, buildBustNotification } from '../../../src/notificationMessages.js';
 import { achievementSlotId } from '../../../src/pushCooldown.js';
 import { sendDiscordNotification } from './discord.ts';
 import {
   claimPushEvent,
+  type DeliveryResult,
   finishPushEvent,
   releasePushEvent,
   sendToSubscriptions,
   subscriptionsForCrew,
-  type DeliveryResult,
 } from './push.ts';
 
 const achievementById = new Map(achievements.map((item: { id: string }) => [item.id, item]));
@@ -36,10 +37,10 @@ export type AnnounceOutcome =
  * cooldown lapsed — turning the cap into a delay.
  */
 async function claimWithoutSending(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   kind: 'bust' | 'achievement',
   sourceId: string,
-  actorId: string
+  actorId: string,
 ) {
   const eventId = await claimPushEvent(admin, kind, sourceId, actorId);
   if (eventId != null) {
@@ -69,10 +70,10 @@ const BURST_WINDOW_MS = 2 * 60 * 1000;
  * thing the sweep checks.
  */
 async function retireUnannouncedSiblings(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   actorId: string,
   anchorUnlockedAt: string | null | undefined,
-  announcedId: string
+  announcedId: string,
 ) {
   const anchor = anchorUnlockedAt ? new Date(anchorUnlockedAt).getTime() : Date.now();
   if (!Number.isFinite(anchor)) return;
@@ -93,13 +94,13 @@ async function retireUnannouncedSiblings(
   }
 }
 
-async function usernameFor(admin: SupabaseClient, userId: string) {
+async function usernameFor(admin: SupabaseClient<Database>, userId: string) {
   const { data } = await admin.from('profiles').select('username').eq('id', userId).maybeSingle();
   return data?.username || 'Someone';
 }
 
 async function announce(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   kind: 'bust' | 'achievement',
   sourceId: string,
   actorId: string,
@@ -107,7 +108,7 @@ async function announce(
   // A cooldown slot held on the caller's behalf. Released alongside the row's own
   // claim if the send fails, so one transient failure does not burn the whole
   // window and lock the backstop out of retrying.
-  slotEventId: number | null = null
+  slotEventId: number | null = null,
 ): Promise<AnnounceOutcome> {
   const eventId = await claimPushEvent(admin, kind, sourceId, actorId);
   if (eventId == null) {
@@ -126,7 +127,7 @@ async function announce(
       admin,
       subscriptions,
       { ...payload, data: { kind, sourceId } },
-      { actorId }
+      { actorId },
     );
     // sendToSubscriptions returns individual transport failures rather than
     // throwing. Keep an all-failed attempt retryable without duplicating a
@@ -149,10 +150,10 @@ async function announce(
 }
 
 export async function announceBust(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   bust: { id: string; user_id: string; note?: string | null; city?: string | null; timestamp?: string },
   username?: string,
-  { skipPush = false } = {}
+  { skipPush = false } = {},
 ) {
   const name = username || (await usernameFor(admin, bust.user_id));
   const payload = buildBustNotification({
@@ -186,13 +187,17 @@ export async function announceBust(
 }
 
 export async function announceAchievement(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   achievement: { id: string; user_id: string; achievement_type: string; unlocked_at?: string | null },
   username?: string,
-  { skipPush = false } = {}
+  { skipPush = false } = {},
 ) {
-  const meta = achievementById.get(achievement.achievement_type) as
-    { name?: string; tier?: string; points?: number; accent?: string } | undefined;
+  const meta = achievementById.get(achievement.achievement_type) as {
+    name?: string;
+    tier?: string;
+    points?: number;
+    accent?: string;
+  } | undefined;
   // An id outside the catalog means stale or hand-written data. Claim it anyway
   // so the scheduled sweep evaluates it once rather than on every run for the
   // whole lookback window, then decline to announce it (nothing meaningful to
@@ -239,7 +244,7 @@ export async function announceAchievement(
     admin,
     'achievement',
     achievementSlotId(achievement.user_id, Date.now()),
-    achievement.user_id
+    achievement.user_id,
   );
   if (slotEventId == null) {
     await Promise.all([

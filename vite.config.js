@@ -37,10 +37,4 @@ export default defineConfig({
     __BUILD_ID__: JSON.stringify(buildId),
   },
   plugins: [react(), buildVersionManifest()],
-  server: {
-    proxy: {
-      '/api': 'http://127.0.0.1:8787',
-      '/ws': { target: 'ws://127.0.0.1:8787', ws: true },
-    },
-  },
 });

@@ -289,7 +289,7 @@ export function derivePersonalStats(userId, busts = [], unlocks = []) {
   const own = busts.filter(b => b.user_id === userId).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
   const streaks = deriveStreaks(own);
   const buckets = {};
-  own.forEach(b => { const k = b.time_bucket || timeBucket(b.timestamp); buckets[k] = (buckets[k] || 0) + 1; });
+  own.forEach(b => { const k = b.time_bucket; buckets[k] = (buckets[k] || 0) + 1; });
   const favoriteBucket = Object.entries(buckets).sort((a, b) => b[1] - a[1])[0]?.[0] || '—';
   const temps = own.map(b => finiteNumber(b.temp_f)).filter(v => v != null);
   const avgTemp = temps.length ? Math.round(temps.reduce((s, t) => s + t, 0) / temps.length) : null;

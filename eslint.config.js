@@ -21,7 +21,7 @@ export default [
     ignores: ['dist/**', 'node_modules/**'],
   },
   {
-    files: ['src/**/*.{js,jsx}', 'server/**/*.js', 'scripts/**/*.mjs'],
+    files: ['src/**/*.{js,jsx}'],
     plugins: { react, 'react-hooks': reactHooks },
     languageOptions: {
       ecmaVersion: 2022,

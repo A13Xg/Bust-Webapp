@@ -23,23 +23,16 @@ Live at `https://a13xg.github.io/Bust-Webapp/`. Supabase project ref
 
 ---
 
-## 2. Two backends, one client
+## 2. One backend
 
-`src/backend.js` picks one at build time and everything else is written against
-its interface.
-
-| Mode | When | Auth | Data | Realtime |
-| --- | --- | --- | --- | --- |
-| **Static** (production) | `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` present at build | Supabase Auth, synthetic emails (`alexg@bust-ops.dev`) | Postgres via PostgREST + RLS | Supabase Realtime |
-| **Server** (local dev only) | otherwise | JWT from `server/index.js` | `server/db.js` + `pg` | WebSocket |
-
-The two have **separate account stores** — static mode uses `profiles`, server
-mode uses `users`. They never share data.
-
-In practice `.env` sets the Supabase vars, so `npm run dev` also runs static
-mode. The Express server is effectively dead weight kept alive by
-`npm run db:migrate` / `npm run db:check` in CI. Removing it is a reasonable
-future cleanup; it is not wired to anything the crew uses.
+`src/backend.js` talks to Supabase directly — Auth (synthetic emails,
+`alexg@bust-ops.dev`), Postgres via PostgREST + RLS, and Realtime — and
+everything else is written against its interface. `npm run dev` requires
+`VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` to be set (see `.env.example`);
+there is no local server and no separate account store to fall out of sync
+with. (An earlier "server mode" — a JWT-authed Express API over a separate
+`pg`-backed `users` table — was removed once it stopped being wired to
+anything the crew used; see git history before 2026-09-27 if you need it.)
 
 ---
 
@@ -213,55 +206,30 @@ is signed with a key the subscription was not created for.
 
 ---
 
-## 5. Discord webhook notifications
+## 5. Discord webhooks
 
-Optional, off by default. Mirrors every bust and every achievement unlock into
-a Discord channel via an incoming webhook, as a rich embed (title, description,
-color, and — for achievements — the tier badge sprite as a thumbnail).
-**Idle/inactivity reminders are never sent to Discord**; `dispatch-inactivity-reminders`
-does not import this code path and never will.
+Discord delivery is optional and disabled by default. It mirrors busts and
+achievements independently of mobile push pacing; inactivity reminders are not
+routed to Discord. The separate `discord_events` ledger deduplicates normal
+retries and concurrent dispatches. `notify-event` handles the immediate path;
+`dispatch-push-backstop` retries failed Discord sends even when the push ledger
+already records the event.
 
-### Why it is separate from push
+The DISCORD debug-menu tab reads and updates settings through the admin-
+allowlisted Edge Functions. The webhook token is masked in responses and is
+stored in the service-role-only `discord_settings` table if entered in the UI.
+Alternatively set the `DISCORD_WEBHOOK_URL` Supabase Function secret as a
+fallback; `SITE_URL` optionally sets the public badge image host. GitHub
+repository secrets are not copied into Supabase by Actions. Configure them
+manually if using the fallback:
 
-Push is paced on purpose — a cooldown-bounded bust, a ten-minute achievement
-slot, a 12-per-5-minute ceiling — because it lands on a lock screen. None of
-that applies to a Discord channel, and the requirement here is literally "every
-bust, every achievement". So Discord delivery is **not** gated by any of the
-push pacing in section 4: it has its own exactly-once ledger
-(`discord_events`, the Discord analogue of `push_events`) and fires regardless
-of whether the push for the same row was sent, suppressed, or had no
-recipients.
+```sh
+supabase secrets set DISCORD_WEBHOOK_URL=<webhook-url> SITE_URL=<public-app-url> --project-ref yuorggekucycvxrtqvvp
+```
 
-### Pieces
-
-| Piece | Role |
-| --- | --- |
-| `supabase/migrations/20260930010000_discord_webhook.sql` | `discord_settings` (singleton config row) + `discord_events` (exactly-once ledger). Both RLS-enabled with zero policies — service role only, same pattern as `push_events`. |
-| `src/discordTemplate.js` | `{{TOKEN}}` templates → Discord embed JSON. Its own token set (`{{USER}}`, `{{NOTE}}`, `{{CITY}}`, `{{TIER}}`, `{{POINTS}}`, `{{PUSH_TITLE}}`/`{{PUSH_BODY}}`, …) — distinct from the crew-broadcast tokens, because a Discord message renders once per *event*, not once per *recipient*. Shares the engine in `src/templateTokens.js` with `broadcastTemplate.js`. |
-| `supabase/functions/_shared/discord.ts` | Loads settings, builds the payload, POSTs to the webhook, claims/releases/finishes `discord_events` (claim/release via the shared `_shared/eventLedger.ts` helper, also used by `push.ts`). `sendDiscordNotification()` never throws — a Discord outage can't take down push. |
-| `supabase/functions/_shared/announce.ts` | Calls `sendDiscordNotification()` from both `announceBust` and `announceAchievement`, so both `notify-event` (instant) and `dispatch-push-backstop` (scheduled sweep) cover Discord automatically. |
-| `supabase/functions/admin-discord-settings/` | Admin-gated (same allowlist as `admin-set-password`) read/write of `discord_settings`. The webhook URL's token never round-trips to the browser — reads get a masked `.../webhooks/<id>/••••` placeholder, and saving that placeholder back leaves the real value untouched. |
-| `supabase/functions/discord-test-notification/` | Admin-gated: fires one sample bust/achievement embed, optionally previewing unsaved settings, so an admin can check a template before it goes live. |
-| Debug menu → **DISCORD** tab | Enable switches, webhook URL override, bot identity, colors, mention content, templates, and the two test-send buttons. |
-
-### Configuration
-
-Nothing is required for the app to keep working without Discord — `enabled`
-defaults to `false`. To turn it on:
-
-1. Discord server → **Server Settings → Integrations → Webhooks → New Webhook**, copy the URL.
-2. Either set it as the `DISCORD_WEBHOOK_URL` Edge Function secret
-   (`supabase secrets set DISCORD_WEBHOOK_URL=...`, same mechanism as
-   `VAPID_PRIVATE_KEY`), or paste it into the DISCORD tab's webhook field,
-   which overrides the secret. Optionally also set `SITE_URL` so achievement
-   embeds can link an absolute badge sprite URL (`public/badges/512/*.png`).
-3. Flip "Discord integration enabled" in the DISCORD tab, use SEND TEST BUST /
-   SEND TEST ACHIEVEMENT to confirm, then enable it for real.
-
-`DISCORD_WEBHOOK_URL` and `SITE_URL` are regular Edge Function secrets, so they
-are settable as GitHub repository secrets the same way `VAPID_PUBLIC_KEY` /
-`VAPID_PRIVATE_KEY` / `REMINDER_CRON_SECRET` are — see `.env.example` and
-section 8 (Secrets) below.
+The production deploy workflow applies the Discord tables with its existing
+`supabase db push` step before deploying Edge Functions. No manual SQL is
+needed for the migration.
 
 ---
 
@@ -325,7 +293,7 @@ most one per day.
 | Where | Name |
 | --- | --- |
 | GitHub Actions | `SUPABASE_ACCESS_TOKEN`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_WEB_PUSH_PUBLIC_KEY`, `SUPABASE_FUNCTIONS_URL`, `REMINDER_CRON_SECRET` |
-| Supabase functions | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `REMINDER_CRON_SECRET`, `BROADCAST_ADMINS`, optionally `VAPID_SUBJECT`, optionally `DISCORD_WEBHOOK_URL`, `SITE_URL` (section 5) |
+| Supabase functions | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `REMINDER_CRON_SECRET`, `BROADCAST_ADMINS`, optionally `VAPID_SUBJECT`, `DISCORD_WEBHOOK_URL`, `SITE_URL` |
 
 Never give a service-role or VAPID **private** key a `VITE_` prefix.
 
@@ -338,11 +306,12 @@ One-time Supabase setup: Authentication → Sign In/Up → **disable Confirm ema
 
 | Command | Covers |
 | --- | --- |
-| `npm run lint` | `src/`, `server/`, `scripts/`, `public/sw.js` |
+| `npm run lint` | `src/`, `public/sw.js` |
 | `npm run format:check` | prettier — **runs in CI, will fail the build** |
 | `npm run typecheck` | browser app (`tsc --noEmit`) |
 | `npm run lint:functions` | `supabase/functions/` (`deno lint`) |
 | `npm run typecheck:functions` | `supabase/functions/` (`deno check`, strict) |
+| `npm run test:functions` | `supabase/functions/_shared/*.test.ts` (`deno test`) |
 | `npm test` | vitest |
 
 Edge Functions are Deno TypeScript and invisible to eslint/tsc. Because they
@@ -351,8 +320,15 @@ JSDoc annotations — those are **load-bearing**: drop them and callbacks in
 `fetchAllPages` land as implicit `any`. A PostgREST builder is a *thenable*, not
 a `Promise`, so callback types must be `PromiseLike`.
 
-**Nothing executes the Edge Functions in CI.** Type-checking will not catch a
-wrong table name or a broken RLS assumption.
+Every `createClient(...)` call and `SupabaseClient` annotation in
+`supabase/functions/` is typed against `_shared/database.types.ts`, generated
+from the linked project (`supabase gen types typescript --linked` — regenerate
+after any schema change). Without it `.from('any_string_here')` type-checks
+fine even against a nonexistent table; with it, a wrong table/column name or a
+bad `.rpc()` signature fails `typecheck:functions` instead of shipping.
+
+Edge Function tests cover shared delivery logic with mocked clients; CI does
+not run them against real Supabase Auth, RLS policies, or database triggers.
 
 Local SQL against production (the CLI is authenticated, project linked):
 
@@ -391,19 +367,15 @@ signed correctly. A 401/403 means the credentials are wrong.
 src/main.jsx            app shell, dashboard, overlays, bust flow
 src/rules.js            cooldown, XP, streaks, records, legacy + progression catalog
 src/expansion.js        expansion/social/market achievement catalog
-src/backend.js          dual-mode backend adapter
+src/backend.js          Supabase backend adapter (auth, postgrest, realtime)
 src/notifications.js    permission, service worker, subscription, rotation
 src/notificationMessages.js  copy, shared verbatim with the Edge Functions
 src/appVersion.js       stale-install detection
 src/pushCooldown.js     achievement announce slot ids
 src/inactivityReminder.js  the 5-7 day nag state machine
-src/templateTokens.js   shared {{TOKEN}} template engine
-src/broadcastTemplate.js  crew-broadcast {{TOKEN}} templates (per-recipient)
-src/discordTemplate.js  Discord webhook {{TOKEN}} templates + embed builders (per-event)
 src/DebugMenu.jsx       the debug overlay
 src/charts.jsx          SVG chart primitives
 public/sw.js            push receiver; NOT a caching worker
-server/                 Express dev-mode API (separate account store)
 supabase/migrations/    the schema, single source of truth
 supabase/functions/     Edge Functions (Deno)
 scripts/generate-icons.py   regenerates public/icons from art/
@@ -425,23 +397,20 @@ Sign-ups require the invite code `bust4me` (compared case-insensitively).
 
 ## 12. Known gaps
 
-- No CI execution of Edge Functions; a wrong table name ships.
-- Server mode (`server/`) is unused in practice but still tested and still
-  maintained by CI. A candidate for removal.
-- `busts` has both `time_bucket` (stored) and a derivable bucket from
-  `timestamp`; `derivePersonalStats` prefers the stored one and falls back.
-- `profiles` carries a redundant case-sensitive `username` unique constraint
-  alongside the `lower(username)` index that actually defines identity.
+- Edge Functions are typed and unit-tested (see §8), but nothing runs them
+  end-to-end in CI against real RLS/triggers/auth. A `supabase start`
+  (Docker) integration job is the remaining follow-up.
 - `charts.jsx` is at ~30% test coverage; it is presentational.
-- **iOS re-prompts for location on every bust when the app is installed to the
-  Home Screen.** Researched, not a bug in this codebase: iOS/WebKit does not
-  persist `navigator.geolocation` permission for a standalone (installed) PWA
-  the way it persists it for the same site open as a normal Safari tab — the
-  installed app runs in a separate, more tightly sandboxed context. This is
-  widely reported by other PWA developers (see WebKit bug 215884 and
-  Apple Developer Forums thread 694999) with no documented fix or workaround on
-  the web platform side as of this writing; Apple's own stance treats it as
-  intentional sandboxing, not a defect. `src/permissionRequests.js` already
-  treats every `requestLocation()` call as something that may re-prompt and
-  handles it (ASKING… / retry), so behaviour is correct — just, on iOS,
-  surprising. Left as-is per the above; revisit if WebKit changes this.
+
+Closed since 2026-09-27: server mode (`server/`) removed (dead weight, see
+§2); `profiles`' redundant case-sensitive `username` constraint dropped
+(migration `20260927222401`); `busts.time_bucket`'s dead client-side fallback
+removed; Edge Functions' Supabase clients typed against the schema and their
+shared push/announce logic unit-tested.
+
+An Apple Developer Forums post from 2021 reports a geolocation prompt
+appearing in Safari instead of a Home Screen PWA on one iOS 15.1.1 device;
+other tested devices behaved normally (thread 694999). This does not establish
+an iOS-wide permission persistence rule. WebKit bug 215884 concerns
+`getUserMedia`, not geolocation, and is not evidence for that behavior. Verify
+on the affected device and OS if the issue recurs.

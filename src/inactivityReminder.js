@@ -11,6 +11,19 @@ import { INACTIVITY_MESSAGE_CATALOG } from './notificationMessages.js';
  *   lastSentAt: string | null,
  *   lastMessageIndex: number | null,
  * }} ReminderState
+ *
+ * Once a user has busted at least once, reconcileInactivityReminderState (and
+ * markInactivityReminderSent fed by it) always fill in a real cycleBustAt and
+ * scheduledFor — only lastSentAt/lastMessageIndex stay possibly-null. This is
+ * what makes the shape insertable into inactivity_reminders, whose
+ * cycle_bust_at/scheduled_for columns are NOT NULL.
+ *
+ * @typedef {{
+ *   cycleBustAt: string,
+ *   scheduledFor: string,
+ *   lastSentAt: string | null,
+ *   lastMessageIndex: number | null,
+ * }} ReconciledReminderState
  */
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -97,7 +110,7 @@ function scheduleInWindow(windowStart, windowEnd, random) {
 
 /**
  * @param {{ state?: ReminderState | null, latestBustAt?: string | null, now?: number, random?: () => number }} args
- * @returns {ReminderState | null} null when the user has never busted.
+ * @returns {ReconciledReminderState | null} null when the user has never busted.
  */
 export function reconcileInactivityReminderState({ state, latestBustAt, now = Date.now(), random = Math.random }) {
   const cycleBustMs = toEpochMs(latestBustAt);
@@ -188,9 +201,13 @@ export function buildInactivityReminderMessage(random = Math.random, lastMessage
 }
 
 /**
- * @param {ReminderState | null | undefined} state
+ * Always called with an already-reconciled state (see call sites), so the
+ * output stays a ReconciledReminderState too — cycleBustAt/scheduledFor never
+ * regress to null here.
+ *
+ * @param {ReconciledReminderState | null | undefined} state
  * @param {{ now?: number, random?: () => number, messageIndex?: number | null }} [options]
- * @returns {ReminderState | null}
+ * @returns {ReconciledReminderState | null}
  */
 export function markInactivityReminderSent(state, { now = Date.now(), random = Math.random, messageIndex = null } = {}) {
   const cycleBustMs = toEpochMs(state?.cycleBustAt);

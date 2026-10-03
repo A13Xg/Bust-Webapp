@@ -10,6 +10,7 @@
  * notification is noise, not news.
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import type { Database } from '../_shared/database.types.ts';
 import { dispatchRecentEvents } from '../_shared/backstop.ts';
 import { authorizeCron, corsHeaders, json } from '../_shared/push.ts';
 
@@ -25,7 +26,7 @@ Deno.serve(async (req) => {
     if (!supabaseUrl || !serviceRoleKey) throw new Error('Supabase function environment is incomplete');
     if (!authorizeCron(req, serviceRoleKey)) return json(401, { error: 'Unauthorized' });
 
-    const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
+    const admin = createClient<Database>(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
     const since = new Date(Date.now() - LOOKBACK_MS).toISOString();
 
     const summary = await dispatchRecentEvents(admin, since);
