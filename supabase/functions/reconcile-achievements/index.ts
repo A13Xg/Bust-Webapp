@@ -50,13 +50,13 @@ Deno.serve(async (req) => {
     const [profileResult, busts, existing, profiles] = await Promise.all([
       admin.from('profiles').select('id, created_at').eq('id', userId).single(),
       fetchAllPages((from, to) =>
-        admin.from('busts').select('*').order('timestamp', { ascending: true }).range(from, to)
+        admin.from('busts').select('*').order('timestamp', { ascending: true }).order('id', { ascending: true }).range(from, to)
       ),
       fetchAllPages((from, to) =>
-        admin.from('achievements').select('*').order('unlocked_at', { ascending: true }).range(from, to)
+        admin.from('achievements').select('*').order('unlocked_at', { ascending: true }).order('id', { ascending: true }).range(from, to)
       ),
       fetchAllPages((from, to) =>
-        admin.from('profiles').select('id').order('created_at', { ascending: true }).range(from, to)
+        admin.from('profiles').select('id').order('created_at', { ascending: true }).order('id', { ascending: true }).range(from, to)
       ),
     ]);
 
@@ -78,7 +78,7 @@ Deno.serve(async (req) => {
     }
 
     const achievementsRows = await fetchAllPages((from, to) =>
-      admin.from('achievements').select('*').order('unlocked_at', { ascending: false }).range(from, to)
+      admin.from('achievements').select('*').order('unlocked_at', { ascending: false }).order('id', { ascending: false }).range(from, to)
     );
 
     return new Response(JSON.stringify({ achievements: achievementsRows }), {
