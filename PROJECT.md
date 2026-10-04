@@ -218,6 +218,11 @@ already records the event.
 The DISCORD debug-menu tab reads and updates settings through the admin-
 allowlisted Edge Functions. The webhook token is masked in responses and is
 stored in the service-role-only `discord_settings` table if entered in the UI.
+The admin must press **SAVE DISCORD SETTINGS**; **SEND TEST** previews unsaved
+form values but does not persist them. The enable switch must also be on for
+normal events to be sent. A masked webhook on reopening the tab means a saved
+override exists; a blank field with no `DISCORD_WEBHOOK_URL` Function secret
+means there is no delivery destination.
 Alternatively set the `DISCORD_WEBHOOK_URL` Supabase Function secret as a
 fallback; `SITE_URL` optionally sets the public badge image host. GitHub
 repository secrets are not copied into Supabase by Actions. Configure them
@@ -396,6 +401,21 @@ Sign-ups require the invite code `bust4me` (compared case-insensitively).
 ---
 
 ## 12. Known gaps
+
+The original Copilot-request completion work is under development on a feature
+branch. Current implementation loads full bust and award histories, exposes a
+crew roster/read-only profiles and recorded trophy history, and shares a bounded
+geolocation probe between startup and bust. Location acquired during the page
+session is reused for five minutes; otherwise a bust waits up to five seconds,
+then tries its actor's prior recorded coordinates and refreshes available region
+metrics. A geolocation permission prompt can outlive the application's timeout;
+the app cannot dismiss it. Push permission remains an explicit profile action.
+
+Before release, finish keyboard focus/history ownership for nested dialogs,
+verify the flow on installed iOS and Android devices, and test the realtime
+publication migration against an existing Supabase database. The deployment
+workflow applies `supabase/migrations/` before shipping the frontend; no manual
+database command is intended for this additive publication change.
 
 - Edge Functions are typed and unit-tested (see §8), but nothing runs them
   end-to-end in CI against real RLS/triggers/auth. A `supabase start`

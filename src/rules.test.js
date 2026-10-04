@@ -1,6 +1,17 @@
 import { describe, it, expect } from 'vitest';
 import { achievements, capUnlocksPerBust, pickAnnounceableUnlock, progressionCatalog, timeBucket, twoHoursRemainingMs, computeAchievementUnlocks, computeProgressionUnlocks, deriveProgressionSummary, deriveAllTimeRecords, deriveStreaks, finiteNumber, levelForXp, derivePersonalStats, buildTrend, todayKey } from './rules.js';
 
+describe('calendar streaks', () => {
+  it('counts consecutive local dates across daylight-saving and year boundaries', () => {
+    const oldZone = process.env.TZ;
+    process.env.TZ = 'America/Los_Angeles';
+    try {
+      expect(deriveStreaks(['2026-03-07T20:00:00Z', '2026-03-08T19:00:00Z', '2026-03-09T19:00:00Z'].map(timestamp => ({ timestamp }))).longest).toBe(3);
+      expect(deriveStreaks(['2025-12-31T20:00:00Z', '2026-01-01T20:00:00Z'].map(timestamp => ({ timestamp }))).longest).toBe(2);
+    } finally { process.env.TZ = oldZone; }
+  });
+});
+
 describe('BUST rules', () => {
   it('labels time-of-day buckets', () => {
     expect(timeBucket(new Date('2026-01-01T02:00:00'))).toBe('Late Night');

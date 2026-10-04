@@ -8,14 +8,16 @@
 A real-time, mobile-first, satirical pressure-logging web app for a private crew. Press the button, ride the milk explosion, climb the leaderboard, and collect an unreasonable number of badges.
 
 ## Features
-- Giant BUST button with charge → explosion → note-capture sequence, SFX, and haptics
+- Giant BUST button with bounded location/context collection, explosion, note capture, SFX, and haptics
 - 2-hour cooldown enforced by Postgres RLS + a trigger, not the client
 - Real-time group feed (Supabase Realtime) with toasts + web push: the crew is notified when anyone busts or unlocks an achievement, plus a staggered 5-7 day nag if you go quiet (desktop, Android, and installed iOS PWAs — see `PROJECT.md`)
 - Optional Discord webhooks mirror busts and achievements as admin-configurable embeds. Inactivity reminders are excluded; see `PROJECT.md`.
 - Environmental + market context per bust: temperature, barometric pressure, elevation, tide, city (reverse-geocoded), and the Bitcoin spot price at the moment you pressed the button
 - Analytics bay: leaderboard with sparklines & streaks, 30-day trend, daypart donut, hour histogram, weekly bars, weekday×hour heatmap, temp/pressure scatter with hover tooltips, all-time records
-- Operator profiles: XP levels with satirical rank titles, editable tagline, avatar re-roll, personal charts, badge showcase, permission controls
-- 130+ achievements & badges, including a Market track keyed off the BTC price at your bust (Diamond Hands, Number Go Up, Pizza Day…) (Material Symbols icons, tier-colored cards) that auto-unlock client-side
+- Operator profiles: XP levels, editable self-profile, crew roster, read-only profiles, earned-award comparisons, and activity-to-profile navigation
+- 130+ achievements, badges, and trophies, including a Market track. The trophy cabinet shows recorded award history; server reconciliation persists earned awards.
+
+Location is checked once in the background after sign-in and reused for up to five minutes in that page session. A bust waits at most five seconds for a position, then uses the signed-in user's newest valid recorded bust location if available; region measurements are fetched again. Browser permission prompts remain under browser/OS control, especially on installed iOS apps. Notification permission is only requested from an explicit user action in profile controls.
 
 ## Running
 Needs `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY` (see `.env.example`) — the app talks to Supabase directly, there is no local server:

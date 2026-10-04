@@ -1,4 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { clearLocation } from './location.js';
 
 import {
   GEO_STORAGE_KEY,
@@ -53,9 +54,11 @@ describe('classifying permission outcomes', () => {
 });
 
 describe('requestLocation', () => {
+  afterEach(() => clearLocation());
   it('resolves with coordinates when the position arrives', async () => {
     const geolocation = {
-      getCurrentPosition: success => success({ coords: { latitude: 1.5, longitude: -2.5, altitude: 100 } }),
+      getCurrentPosition: success =>
+        success({ timestamp: Date.now(), coords: { latitude: 1.5, longitude: -2.5, altitude: 100 } }),
     };
     const result = await requestLocation({ geolocation });
     expect(result.outcome).toBe(OUTCOME.granted);
