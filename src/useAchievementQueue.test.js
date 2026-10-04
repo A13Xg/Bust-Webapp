@@ -4,6 +4,7 @@
  * real useAchievementQueue hook via renderHook.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { StrictMode, createElement } from 'react';
 import { renderHook, act } from '@testing-library/react';
 import { dedupeItems, useAchievementQueue } from './useAchievementQueue.js';
 
@@ -134,5 +135,21 @@ describe('useAchievementQueue', () => {
       result.current.dismiss();
     });
     expect(result.current.current?.id).toBe('3');
+  });
+});
+
+
+describe('achievement queue under StrictMode', () => {
+  it('never duplicates queued items when React replays state updaters', () => {
+    const wrapper = ({ children }) => createElement(StrictMode, null, children);
+    const { result } = renderHook(() => useAchievementQueue(5000), { wrapper });
+    act(() => result.current.enqueue([{ id: 'a' }, { id: 'b' }]));
+    act(() => result.current.enqueue({ id: 'c' }));
+    const displayed = [];
+    for (let i = 0; i < 5 && result.current.current; i++) {
+      displayed.push(result.current.current.id);
+      act(() => result.current.dismiss());
+    }
+    expect(displayed).toEqual(['a', 'b', 'c']);
   });
 });

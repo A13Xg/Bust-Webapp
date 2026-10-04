@@ -78,3 +78,11 @@ export function userMetrics(userId, busts, unlocks) {
     xpIncomplete: earned.some(record => record.item.points == null),
   };
 }
+
+/** Reconciliation replaces this user's history but may include the whole crew.
+ * Merge by row ID so repeated responses cannot inflate another user's XP. */
+export function mergeReconciledAwards(previous, reconciled, userId) {
+  return [
+    ...new Map([...previous.filter(row => row.user_id !== userId), ...reconciled].map(row => [row.id, row])).values(),
+  ];
+}

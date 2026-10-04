@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { comparisonRows, earnedRecords, userMetrics } from './socialData.js';
+import { comparisonRows, earnedRecords, userMetrics, mergeReconciledAwards } from './socialData.js';
 
 const award = (id, user_id, achievement_type, unlocked_at) => ({ id, user_id, achievement_type, unlocked_at });
 
@@ -38,4 +38,15 @@ describe('persisted social data', () => {
     expect(metrics.measurements.temp_f).toMatchObject({ count: 0, average: null });
     expect(metrics.measurements.pressure).toMatchObject({ count: 1, average: 1010 });
   });
+});
+
+it('merges repeated full-crew reconciliation without duplicating awards', () => {
+  const mine = award('1', 'a', 'first_release', '2025-01-01');
+  const theirs = award('2', 'b', 'hat_trick', '2025-01-02');
+  const stale = award('3', 'a', 'retired_award', '2025-01-02');
+  const first = mergeReconciledAwards([mine, theirs, stale], [mine, theirs], 'a');
+  const again = mergeReconciledAwards(first, [mine, theirs], 'a');
+  expect(again).toHaveLength(2);
+  expect(new Set(again.map(row => row.id))).toEqual(new Set(['1', '2']));
+  expect(mergeReconciledAwards(first, [], 'a')).toEqual([theirs]);
 });
